@@ -1,8 +1,11 @@
 
 
+export type EngineMode = 'offline' | 'online';
+
 export enum GameState {
   UPLOADING = 'UPLOADING',
-  FETCHING = 'FETCHING',
+  GENRE_SELECTION = 'GENRE_SELECTION',
+  LOADING = 'LOADING',
   PROCESSING = 'PROCESSING',
   PLAYING = 'PLAYING',
   ERROR = 'ERROR',
@@ -54,6 +57,15 @@ export interface ObjectProperty {
     value: string;
 }
 
+/**
+ * Represents a physical or conceptual object in the world.
+ * To support puzzle mechanics, the 'properties' array can use standardized keys:
+ * - 'is_container': "true" | "false"
+ * - 'is_open': "true" | "false"
+ * - 'is_locked': "true" | "false"
+ * - 'key_id': A string that matches another object's 'item_id'
+ * - 'item_id': A unique identifier for a specific item (like a key)
+ */
 export interface WorldObject {
     name: string;
     properties: ObjectProperty[];
@@ -64,6 +76,11 @@ export interface CharacterLocation {
     locationName: string;
 }
 
+/**
+ * Defines the location of an object.
+ * The 'locationName' can be a setting name OR the name of another WorldObject,
+ * allowing for objects to be placed inside other objects (containers).
+ */
 export interface ObjectLocation {
     objectName: string;
     locationName: string;
@@ -76,7 +93,7 @@ export interface FactionInfluence {
 
 export interface EnvironmentState {
     weather: string; // e.g., "Clear", "Rainy", "Foggy"
-    lighting: string; // e.g., "Bright Daylight", "Dim Twilight", "Pitch Black"
+    lighting: string; // e.g., "Dim Twilight", "Pitch Black"
 }
 
 
@@ -114,4 +131,27 @@ export interface WorldModel {
 export interface SaveGame {
   worldModel: WorldModel;
   adventureLog: AdventureLogEntry[];
+}
+
+export interface ApiMutation {
+  type: 'ADD_OBJECT' | 'ENHANCE_NARRATIVE';
+  payload: WorldObject | string;
+  reason: string;
+}
+
+export interface MutationLogEntry {
+  id: string;
+  timestamp: string;
+  mutation: ApiMutation;
+  status: 'applied' | 'reverted' | 'pending';
+}
+
+export interface AdventureGenre {
+    title: string;
+    description: string;
+    narrative: string;
+}
+
+export interface OfflineResources {
+  asciiArt: Record<string, string>;
 }

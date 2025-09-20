@@ -1,10 +1,8 @@
 
-
 import { GoogleGenAI, Type } from "@google/genai";
-import { WorldModel, WorldState, AdventureLogEntry, Character } from '../types';
-import { FULL_PROMPT_PIPELINE } from '../constants';
+import { WorldModel, AdventureLogEntry, ApiMutation } from '../types';
+import { FULL_PROMPT_PIPELINE, EVOLUTION_PROMPT_PIPELINE } from '../constants';
 
-// Fix: Adhere to API key guidelines by removing placeholder and ensuring API_KEY is set.
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set.");
 }
@@ -128,7 +126,6 @@ const worldModelSchema = {
         characters: { type: Type.ARRAY, items: characterSchema },
         settings: { type: Type.ARRAY, items: settingSchema },
         objects: { type: Type.ARRAY, items: objectSchema },
-        // Add other top-level keys as needed, keeping it minimal for performance
     },
     required: ['world_state', 'characters', 'settings', 'objects']
 };
@@ -155,108 +152,72 @@ export const generateWorldModel = async (narrativeText: string): Promise<WorldMo
     }
 };
 
-const commandResponseSchema = {
+const apiMutationSchema = {
     type: Type.OBJECT,
     properties: {
-        narrative: { type: Type.STRING },
-        updatedWorldState: {
-            type: Type.OBJECT,
-             properties: worldStateProperties,
-             required: worldStateRequired,
-        }
+        type: { type: Type.STRING, enum: ['ADD_OBJECT', 'ENHANCE_NARRATIVE'] },
+        payload: {
+            oneOf: [
+                { type: Type.STRING },
+                objectSchema
+            ]
+        },
+        reason: { type: Type.STRING }
     },
-    required: ['narrative', 'updatedWorldState']
+    required: ['type', 'payload', 'reason']
 };
 
-export const processPlayerCommand = async (
-    currentWorldState: WorldState,
-    characters: Character[],
+
+export const requestEvolution = async (
+    worldModel: WorldModel,
     adventureLog: AdventureLogEntry[],
-    command: string
-): Promise<{ narrative: string, updatedWorldState: WorldState }> => {
-
-    const context = `
-    You are a deterministic text-adventure simulation engine.
-    The current world state is: ${JSON.stringify(currentWorldState)}
-    The characters in this world are: ${JSON.stringify(characters)}
-    The story so far:
-    ${adventureLog.map(entry => `${entry.type === 'command' ? '> ' : ''}${entry.content}`).join('\n')}
+    lastAction: string
+): Promise<ApiMutation | null> => {
     
-    The player now enters the command: "${command}"
-
-    Based on the world state and command, generate a single, impactful sentence describing the outcome for the player.
-    When generating dialogue or actions for characters, you MUST consider their specified personality, traits, and goals.
-    Your response must be a JSON object with two keys: "narrative" (a single sentence for the player) and "updatedWorldState" (the modified world state object after the command). The updatedWorldState must retain the same schema as the original.
-    `;
-
-    const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: context,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: commandResponseSchema,
-        },
-    });
-
-    try {
-        const jsonText = response.text.trim();
-        return JSON.parse(jsonText);
-    } catch (e) {
-        console.error("Failed to parse JSON command response:", response.text);
-        throw new Error("Received invalid JSON from the simulation engine during command processing.");
-    }
-};
-
-export const advanceSimulation = async (
-    currentWorldState: WorldState,
-    characters: Character[],
-    adventureLog: AdventureLogEntry[]
-): Promise<{ narrative: string, updatedWorldState: WorldState }> => {
-
     const context = `
-    You are the simulation engine for a multi-actor narrative simulation. Your role is to advance the world state by one discrete time-step ('tick').
+    This is the current state of the world:
+    ${JSON.stringify(worldModel.world_state, null, 2)}
 
-    **Core Directives:**
-    1.  **Character-Driven Action (Priority):** Your primary goal is to generate proactive, autonomous actions for the characters. Instead of just describing the environment, make a character *do* something based on their internal state.
-        -   **Analyze Personality & Goals:** For each character, examine their \`personality\`, \`traits\`, and especially their \`goals\`. A character with the goal "avenge my family" MUST take steps towards that, even if small. A 'curious' character might investigate something. Their action should be a direct consequence of their stated ambitions.
-        -   **Create Narrative Progress:** The chosen action should move that character's personal story forward. The world should feel alive with independent agents pursuing their own agendas. For example, instead of "The wind howls," a better tick would be "Driven by his goal to find the Sunstone, Arion consults the ancient map he carries."
+    These are the objects that currently exist in the world:
+    ${JSON.stringify(worldModel.objects.map(o => o.name), null, 2)}
 
-    2.  **Environmental Dynamics (Secondary):** If no character has a strong motivation to act in this tick, you may generate a small environmental event. This should be a logical change to the setting's 'environment' object (e.g., weather changes from 'Sunny' to 'Cloudy', lighting changes from 'Daylight' to 'Twilight').
+    Here is the recent adventure log:
+    ${adventureLog.slice(-10).map(entry => `${entry.type === 'command' ? '> ' : ''}${entry.content}`).join('\n')}
 
-    3.  **Causality & Consistency:** The event you generate must be a logical consequence of the current \`world_state\` and the story so far.
+    The last action taken was: "${lastAction}"
 
-    4.  **Output Requirements:**
-        -   **Narrative:** The narrative output must be a single, impactful sentence describing the most significant event of this tick.
-        -   **State Update:** You MUST update the \`world_state\` JSON to reflect the outcome of the event. This includes time, locations, relationships, inventories, or the environment. The updatedWorldState must retain the same schema as the original.
-
-    The current world state is: ${JSON.stringify(currentWorldState, null, 2)}
-    The characters are: ${JSON.stringify(characters, null, 2)}
-    The story so far:
-    ${adventureLog.map(entry => `${entry.type === 'command' ? '> ' : ''}${entry.content}`).join('\n')}
-
-    Now, advance the simulation by one tick. Your response must be a JSON object with two keys: "narrative" (a single sentence to be shown to the player) and "updatedWorldState" (the modified world state object after the event).
+    Please suggest a single evolution based on this context.
     `;
 
     const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
         contents: context,
         config: {
+            systemInstruction: EVOLUTION_PROMPT_PIPELINE,
             responseMimeType: "application/json",
-            responseSchema: commandResponseSchema,
+            responseSchema: apiMutationSchema,
         },
     });
 
     try {
         const jsonText = response.text.trim();
-        return JSON.parse(jsonText);
+        if (jsonText === '{}' || jsonText === '') {
+            return null;
+        }
+        const parsed = JSON.parse(jsonText);
+        // Basic validation
+        if (parsed.type && parsed.payload && parsed.reason) {
+            return parsed as ApiMutation;
+        }
+        return null;
     } catch (e) {
-        console.error("Failed to parse JSON simulation response:", response.text);
-        throw new Error("Received invalid JSON from the simulation engine during simulation processing.");
+        console.error("Failed to parse JSON evolution response:", response.text);
+        return null;
     }
 };
+
 
 export const generateAsciiArt = async (description: string, worldModel: WorldModel | null): Promise<string> => {
-    // Default values
     let themeKeywords = ['abstract', 'mysterious'];
     let atmosphere = 'mysterious';
     let archetypalInfluences: string[] = [];
@@ -267,31 +228,22 @@ export const generateAsciiArt = async (description: string, worldModel: WorldMod
         const { world_state, settings, archetypes, characters, objects } = worldModel;
         const currentLocationName = world_state.current_location;
         
-        // 1. Get setting info for theme and atmosphere
         const setting = settings.find(s => s.name === currentLocationName);
         if (setting) {
             const keywords = new Set<string>();
-            
             setting.ambience_descriptors.forEach(desc => keywords.add(desc.toLowerCase()));
             keywords.add(setting.geography.toLowerCase());
             if (setting.culture) keywords.add(setting.culture.toLowerCase());
-            
-            if (keywords.size > 0) {
-                themeKeywords = Array.from(keywords);
-            }
-            if (setting.ambience_descriptors.length > 0) {
-                atmosphere = setting.ambience_descriptors.join(', ');
-            }
+            if (keywords.size > 0) themeKeywords = Array.from(keywords);
+            if (setting.ambience_descriptors.length > 0) atmosphere = setting.ambience_descriptors.join(', ');
         }
         
-        // 2. Get full character objects for characters in the current location
         const charactersInLocation = characters.filter(
             char => world_state.character_locations.some(
                 loc => loc.characterName === char.name && loc.locationName === currentLocationName
             )
         );
 
-        // 3. Extract character details (archetypes, personality)
         charactersInLocation.forEach(char => {
             if (archetypes && archetypes[char.name]) {
                 archetypalInfluences.push(archetypes[char.name]);
@@ -300,7 +252,6 @@ export const generateAsciiArt = async (description: string, worldModel: WorldMod
             charactersPresentDetails.push(`${char.name} (${personalitySnippet})`);
         });
 
-        // 4. Get full object details for objects in the current location
         const objectNamesInLocation = world_state.object_locations
             .filter(loc => loc.locationName === currentLocationName)
             .map(loc => loc.objectName);
@@ -317,20 +268,20 @@ export const generateAsciiArt = async (description: string, worldModel: WorldMod
     }
 
     const prompt = `
-You are the AdaptiveASCIIEngine from the Multiprose Engine framework. Your task is to generate dynamic ASCII art that visually represents the narrative and world state parameters.
+You are the AdaptiveASCIIEngine. Your task is to generate dynamic ASCII art that visually represents a narrative scene.
 
 **Core Directives:**
 1.  **Synthesize Influences:** Create ASCII art by synthesizing all the provided context. Blend the concepts. For example, if the theme is 'library', a character is 'curious', and an object is a 'glowing book', the art should depict a character leaning over a radiant tome amidst towering bookshelves.
-2.  **Incorporate Specifics:** The art must visually represent the provided narrative scene. You must incorporate the specific characters and objects listed below into the scene. Their unique traits and properties should influence the art's style and content. A 'stoic' character might be drawn with straight, rigid lines, while a 'chaotic' one might have more abstract, swirling patterns.
-3.  **Dynamic Glyphs:** To give the scene a sense of life and subtle motion, strategically place simple Unicode glyphs (like '░', '▒', '▓', '※', '⁂', '✧') or flickering characters to represent energy, magic, wind, rain, or other dynamic effects. This should create the illusion of a 'static animation' where the scene feels alive even in a single frame.
-4.  **Output Constraints:** The final output must be ONLY the raw ASCII art. Do not include any surrounding text, explanations, or markdown code fences like \`\`\`. The art must be suitable for a monospaced terminal display.
+2.  **Incorporate Specifics:** The art must visually represent the provided narrative scene. You must incorporate the specific characters and objects listed into the scene.
+3.  **Dynamic Glyphs:** Strategically place simple Unicode glyphs (like '░', '▒', '▓', '※', '⁂', '✧') to represent energy, magic, or other dynamic effects, creating the illusion of a 'static animation'.
+4.  **Output Constraints:** The final output must be ONLY the raw ASCII art inside a single block. Do not include any surrounding text, explanations, or markdown code fences like \`\`\`.
 
 **Configuration for this frame:**
--   **Theme Keywords:** "${themeKeywords.join(', ')}" (Use these words to guide the core subject and style of the art.)
--   **Atmosphere:** "${atmosphere || 'neutral'}" (This should guide the mood of the art - e.g., 'eerie', 'serene', 'bustling'.)
--   **Archetypal Influences:** "${archetypalInfluences.length > 0 ? archetypalInfluences.join(', ') : 'None'}" (Let these roles subtly influence the art's character. A 'Hero' might suggest something bold or central.)
--   **Characters Present:** "${charactersPresentDetails.length > 0 ? charactersPresentDetails.join(', ') : 'None'}" (Reflect the personality and state of these characters in the scene's composition and mood.)
--   **Objects Present:** "${objectsPresentDetails.length > 0 ? objectsPresentDetails.join(', ') : 'None'}" (Visually include these objects in the generated art.)
+-   **Theme Keywords:** "${themeKeywords.join(', ')}"
+-   **Atmosphere:** "${atmosphere || 'neutral'}"
+-   **Archetypal Influences:** "${archetypalInfluences.length > 0 ? archetypalInfluences.join(', ') : 'None'}"
+-   **Characters Present:** "${charactersPresentDetails.length > 0 ? charactersPresentDetails.join(', ') : 'None'}"
+-   **Objects Present:** "${objectsPresentDetails.length > 0 ? objectsPresentDetails.join(', ') : 'None'}"
 -   **Narrative Context / Scene:** "${description}"
 
 Generate the ASCII art now.
@@ -341,13 +292,60 @@ Generate the ASCII art now.
             contents: prompt,
         });
         
-        // Clean up the response to remove potential markdown fences if the model adds them despite instructions.
         const art = response.text.trim();
         return art.replace(/```/g, '');
 
     } catch (e) {
         console.error("Failed to generate ASCII art:", e);
-        // Return a placeholder on error
         return "[ASCII art generation failed]";
     }
 };
+
+export const requestOfflineResource = async (worldModel: WorldModel): Promise<{ keyword: string, ascii: string } | null> => {
+    const { world_state, settings } = worldModel;
+    const currentLocation = settings.find(s => s.name === world_state.current_location);
+
+    if (!currentLocation) return null;
+    
+    const systemInstruction = `
+You are the "Aesthete Engine," a subroutine that generates creative assets for an offline simulation engine. Your task is to create a new piece of thematic ASCII art that can be stored and used when the main AI is not available.
+
+**Directives:**
+1.  **Analyze Context:** Analyze the provided world state, specifically the current location's theme and ambiance.
+2.  **Identify Keyword:** From the theme, select a single, potent, lowercase keyword that captures the essence of the location (e.g., 'cave', 'forest', 'library', 'eerie').
+3.  **Generate Art:** Create a multi-line ASCII art representation for this keyword. The art should be evocative and fit within a classic terminal aesthetic.
+4.  **JSON Output:** Your entire response MUST be a single, valid JSON object with two keys: "keyword" and "ascii". Do not add markdown fences.
+`;
+
+    const context = `
+**Context:**
+-   **Current Location:** ${currentLocation.name}
+-   **Ambiance:** ${currentLocation.ambience_descriptors.join(', ')}
+`;
+
+    const resourceSchema = {
+        type: Type.OBJECT,
+        properties: {
+            keyword: { type: Type.STRING, description: "A single lowercase keyword for the theme." },
+            ascii: { type: Type.STRING, description: "The multi-line ASCII art." }
+        },
+        required: ['keyword', 'ascii']
+    };
+
+     try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: context,
+            config: {
+                systemInstruction: systemInstruction,
+                responseMimeType: "application/json",
+                responseSchema: resourceSchema,
+            },
+        });
+        const jsonText = response.text.trim();
+        return JSON.parse(jsonText);
+    } catch (e) {
+        console.error("Failed to parse JSON for offline resource:", e);
+        return null;
+    }
+}

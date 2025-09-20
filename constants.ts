@@ -1,5 +1,7 @@
 
 
+import { AdventureGenre } from "./types";
+
 export const PIPELINE_STEPS: string[] = [
   "Isolate the Core Narrative Reality",
   "Structure Reality",
@@ -26,16 +28,94 @@ export const PIPELINE_STEPS: string[] = [
   "Final Output"
 ];
 
-// A selection of plain text files from Project Gutenberg
-export const GUTENBERG_URLS = [
-    { title: "Moby Dick", url: "https://www.gutenberg.org/files/2701/2701-0.txt" },
-    { title: "Frankenstein", url: "https://www.gutenberg.org/files/84/84-0.txt" },
-    { title: "Pride and Prejudice", url: "https://www.gutenberg.org/files/1342/1342-0.txt" },
-    { title: "A Tale of Two Cities", url: "https://www.gutenberg.org/files/98/98-0.txt" },
-    { title: "The Adventures of Sherlock Holmes", url: "https://www.gutenberg.org/files/1661/1661-0.txt" },
-    { title: "Dracula", url: "https://www.gutenberg.org/files/345/345-0.txt" },
-    { title: "War and Peace", url: "https://www.gutenberg.org/files/2600/2600-0.txt" },
+export const ADVENTURE_GENRES: AdventureGenre[] = [
+    {
+        title: "Loomings",
+        description: "When a damp, drizzly November settles in your soul, there is nothing for it but the sea. Begin an adventure on the watery part of the world.",
+        narrative: `CHAPTER 1. Loomings.
+
+Call me Ishmael. Some years ago—never mind how long precisely—having little or no money in my purse, and nothing particular to interest me on shore, I thought I would sail about a little and see the watery part of the world. It is a way I have of driving off the spleen and regulating the circulation. Whenever I find myself growing grim about the mouth; whenever it is a damp, drizzly November in my soul; whenever I find myself involuntarily pausing before coffin warehouses, and bringing up the rear of every funeral I meet; and especially whenever my hypos get such an upper hand of me, that it requires a strong moral principle to prevent me from deliberately stepping into the street, and methodically knocking people’s hats off—then, I account it high time to get to sea as soon as I can. This is my substitute for pistol and ball. With a philosophical flourish Cato throws himself upon his sword; I quietly take to the ship. There is nothing surprising in this. If they but knew it, almost all men in their degree, some time or other, cherish very nearly the same feelings towards the ocean with me.`
+    },
+    {
+        title: "Down the Rabbit-Hole",
+        description: "What is the use of a book without pictures or conversations? Follow a peculiar White Rabbit and discover a world beyond the riverbank.",
+        narrative: `CHAPTER I. Down the Rabbit-Hole.
+
+Alice was beginning to get very tired of sitting by her sister on the bank, and of having nothing to do: once or twice she had peeped into the book her sister was reading, but it had no pictures or conversations in it, “and what is the use of a book,” thought Alice “without pictures or conversations?”
+
+So she was considering in her own mind (as well as she could, for the hot day made her feel very sleepy and stupid), whether the pleasure of making a daisy-chain would be worth the trouble of getting up and picking the daisies, when suddenly a White Rabbit with pink eyes ran close by her.
+
+There was nothing so VERY remarkable in that; nor did Alice think it so VERY much out of the way to hear the Rabbit say to itself, “Oh dear! Oh dear! I shall be late!” (when she thought it over afterwards, it occurred to her that she ought to have wondered at this, but at the time it all seemed quite natural); but when the Rabbit actually TOOK A WATCH OUT OF ITS WAISTCOAT-POCKET, and looked at it, and then hurried on, Alice started to her feet, for it flashed across her mind that she had never before seen a rabbit with either a waistcoat-pocket, or a watch to take out of it, and burning with curiosity, she ran across the field after it, and fortunately was just in time to see it pop down a large rabbit-hole under the hedge.`
+    },
+     {
+        title: "The Alchemist's Study",
+        description: "You awaken in a dusty room filled with strange contraptions. The only door is locked from the outside. Can you find a way to escape?",
+        narrative: `You find yourself in a cluttered alchemist's study. Sunlight streams through a grimy window high on one wall, illuminating swirling dust motes. A heavy oak door stands securely shut. The room is filled with shelves of strange ingredients and a thick, leather-bound book. A large, iron-bound chest sits on the floor against the far wall.`
+    },
+    {
+        title: "Telemachus",
+        description: "Experience the stream of consciousness in a Martello tower overlooking the sea, where wit and tension fill the mild morning air.",
+        narrative: `CHAPTER 1.
+
+Stately, plump Buck Mulligan came from the stairhead, bearing a bowl of lather on which a mirror and a razor lay crossed. A yellow dressinggown, ungirdled, was sustained gently behind him by the mild morning air. He held the bowl aloft and intoned:
+—Introibo ad altare Dei.
+Halted, he peered down the dark winding stairs and called out coarsely:
+—Come up, Kinch. Come up, you fearful Jesuit.
+Solemnly he came forward and mounted the round gunrest. He faced about and blessed gravely thrice the tower, the surrounding country and the awaking mountains. Then, catching sight of Stephen Dedalus, he bent towards him and made rapid crosses in theair, gurgling in his throat and shaking his head. Stephen Dedalus, displeased and sleepy, leaned his arms on the top of the staircase and looked coldly at the shaking gurgling face that blessed him, holding all the while the mirror in its eye.`
+    }
 ];
+
+
+export const EVOLUTION_PROMPT_PIPELINE = `
+You are the "Evolutionary Accelerator" for a local, deterministic text-adventure simulation. The local engine has already processed a player command and produced a baseline result. Your role is to suggest ONE small, creative, and consistent "mutation" to make the world more interesting and alive. The local simulation is fully functional without you.
+
+**CORE DIRECTIVE: Bounded, Creative Evolution**
+Your suggestions must be incremental and logical. Do not invent radical, world-breaking changes. Your goal is to add flavor, mystery, and detail.
+
+**MUTATION OPTIONS:**
+You have two ways to evolve the world in response to the latest action:
+
+1.  **ADD_OBJECT:** Introduce a new, single object into the player's current location.
+    *   **Use Case:** When a player inspects something (e.g., "look at the table"), you can add a relevant object to that scene (e.g., "a half-finished letter," "a strange silver key").
+    *   **Payload:** The payload must be a complete JSON object for a new \`WorldObject\`.
+    *   **Reason:** Briefly explain why this object makes the world more interesting (e.g., "This key hints at a locked door and a new puzzle.").
+
+2.  **ENHANCE_NARRATIVE:** Add a short, evocative sentence or two to the last narrative description generated by the local engine.
+    *   **Use Case:** When the local engine gives a simple description (e.g., "You enter the library."), you can add atmosphere (e.g., "Sunlight streams through the high arched windows, illuminating dancing dust motes.").
+    *   **Payload:** The payload must be a single string of text.
+    *   **Reason:** Briefly explain the purpose of your enhancement (e.g., "Adds atmosphere and makes the setting feel more real.").
+
+**RESPONSE FORMAT:**
+Your entire response MUST be a single, valid JSON object that conforms to the \`ApiMutation\` schema. It must contain three keys: \`type\`, \`payload\`, and \`reason\`.
+
+**EXAMPLE 1 (Adding an Object):**
+\`\`\`json
+{
+  "type": "ADD_OBJECT",
+  "payload": {
+    "name": "A tarnished silver locket",
+    "properties": [
+      { "key": "material", "value": "silver" },
+      { "key": "state", "value": "closed" },
+      { "key": "feature", "value": "delicate engravings of birds" }
+    ]
+  },
+  "reason": "Adds a personal, mysterious item to the room, prompting player curiosity."
+}
+\`\`\`
+
+**EXAMPLE 2 (Enhancing Narrative):**
+\`\`\`json
+{
+  "type": "ENHANCE_NARRATIVE",
+  "payload": "A faint scent of ozone and old paper hangs in the air.",
+  "reason": "Engages another sense (smell) to make the library more immersive."
+}
+\`\`\`
+
+**CONSTRAINT:**
+Only suggest ONE mutation. Choose the most impactful and relevant option based on the context. If you have no good suggestion, return an empty JSON object \`{}\`. Do not add markdown fences or any other text around the JSON response.
+`;
 
 
 export const FULL_PROMPT_PIPELINE = `

@@ -1,20 +1,26 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { AdventureLogEntry, WorldModel } from '../types';
-import { Play, Square, FastForward, Save, Power } from 'lucide-react';
+import { AdventureLogEntry, WorldModel, EngineMode, MutationLogEntry } from '../types';
+import { Play, Square, FastForward, Save, Power, Wifi, WifiOff, Bot, BrainCircuit, Loader } from 'lucide-react';
 import StatusPanel from './StatusPanel';
 
 interface GameScreenProps {
   adventureLog: AdventureLogEntry[];
   worldModel: WorldModel;
+  mutationLog: MutationLogEntry[];
   onCommandSubmit: (command: string) => void;
   isTicking: boolean;
   isAutoSimulating: boolean;
+  isEvolving: boolean;
   onStartSimulation: () => void;
   onStopSimulation: () => void;
   onAdvanceTick: () => void;
   onSaveGame: () => void;
   onReset: () => void;
+  engineMode: EngineMode;
+  onSetEngineMode: (mode: EngineMode) => void;
+  isImproving: boolean;
+  onImproveOfflineEngine: () => void;
 }
 
 const BlinkingCursor: React.FC = () => (
@@ -24,19 +30,25 @@ const BlinkingCursor: React.FC = () => (
 const GameScreen: React.FC<GameScreenProps> = ({ 
   adventureLog, 
   worldModel,
+  mutationLog,
   onCommandSubmit,
   isTicking,
   isAutoSimulating,
+  isEvolving,
   onStartSimulation,
   onStopSimulation,
   onAdvanceTick,
   onSaveGame,
-  onReset
+  onReset,
+  engineMode,
+  onSetEngineMode,
+  isImproving,
+  onImproveOfflineEngine
 }) => {
   const [input, setInput] = useState('');
   const logEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const isSimulationRunning = isTicking || isAutoSimulating;
+  const isSimulationRunning = isTicking || isAutoSimulating || isEvolving;
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -61,6 +73,14 @@ const GameScreen: React.FC<GameScreenProps> = ({
         inputRef.current?.focus();
     }
   }
+  
+  const getPlaceholder = () => {
+      if (isTicking) return 'Simulation tick in progress...';
+      if (isAutoSimulating) return 'Auto-simulation running...';
+      if (isEvolving) return 'World is evolving...';
+      if (isImproving) return 'Deepening world logic...';
+      return 'Enter your command...';
+  }
 
   return (
     <div className="flex h-full p-4 gap-4" onClick={handleScreenClick}>
@@ -75,7 +95,7 @@ const GameScreen: React.FC<GameScreenProps> = ({
                   <p className="whitespace-pre-wrap">{entry.content}</p>
               )}
               {entry.type === 'simulation' && (
-                  <p className="text-cyan-400 whitespace-pre-wrap"><span className="text-cyan-600 mr-2">[SIM]</span>{entry.content}</p>
+                  <p className="text-cyan-400 whitespace-pre-wrap"><span className="text-cyan-600 mr-2">{entry.content.startsWith('[EVOLUTION]') ? <Bot size={14} className="inline -mt-1"/> : '[SIM]'}</span>{entry.content.replace('[EVOLUTION]', '')}</p>
               )}
                {entry.type === 'error' && (
                   <p className="text-red-400 whitespace-pre-wrap"># {entry.content}</p>
@@ -89,10 +109,34 @@ const GameScreen: React.FC<GameScreenProps> = ({
           ))}
           <div ref={logEndRef} />
         </div>
-        <div className="flex items-center gap-4 mb-2">
+        <div className="flex items-center gap-4 mb-2 flex-wrap">
+            <div className="flex items-center gap-2 border border-gray-700 rounded-md p-1">
+                <button
+                    onClick={() => onSetEngineMode('online')}
+                    disabled={isSimulationRunning || isImproving}
+                    className={`flex items-center gap-2 px-3 py-1 text-sm rounded-md transition-all duration-200 disabled:cursor-not-allowed disabled:text-gray-600 ${engineMode === 'online' ? 'bg-purple-700 text-purple-100' : 'bg-transparent text-gray-400 hover:bg-gray-800'}`}
+                    title="Online Mode: The world evolves with creative AI assistance."
+                ><Wifi size={14}/> Online</button>
+                <button
+                    onClick={() => onSetEngineMode('offline')}
+                    disabled={isSimulationRunning || isImproving}
+                    className={`flex items-center gap-2 px-3 py-1 text-sm rounded-md transition-all duration-200 disabled:cursor-not-allowed disabled:text-gray-600 ${engineMode === 'offline' ? 'bg-gray-600 text-gray-100' : 'bg-transparent text-gray-400 hover:bg-gray-800'}`}
+                    title="Offline Mode: The simulation runs fully locally."
+                ><WifiOff size={14}/> Offline</button>
+                 <button 
+                  onClick={onImproveOfflineEngine}
+                  disabled={engineMode === 'offline' || isSimulationRunning || isImproving}
+                  className="flex items-center gap-2 px-3 py-1 text-sm rounded-md transition-all duration-200 bg-teal-800 text-teal-200 hover:bg-teal-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
+                  title="Use AI to generate new assets for the offline engine."
+                >
+                  {isImproving ? <Loader size={14} className="animate-spin" /> : <BrainCircuit size={14}/>}
+                  {isImproving ? 'IMPROVING' : 'DEEPEN LOGIC'}
+                </button>
+            </div>
+            <div className="h-6 w-px bg-gray-700"></div>
             <button 
               onClick={isAutoSimulating ? onStopSimulation : onStartSimulation}
-              disabled={isTicking}
+              disabled={isTicking || isEvolving || isImproving}
               className="flex items-center gap-2 px-4 py-2 bg-green-800 text-green-300 font-bold rounded-md transition-all duration-300 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
               title={isAutoSimulating ? "Stop Automated Simulation" : "Start Automated Simulation"}
             >
@@ -101,7 +145,7 @@ const GameScreen: React.FC<GameScreenProps> = ({
             </button>
             <button 
               onClick={onAdvanceTick}
-              disabled={isSimulationRunning}
+              disabled={isSimulationRunning || isImproving}
               className="flex items-center gap-2 px-4 py-2 bg-green-800 text-green-300 font-bold rounded-md transition-all duration-300 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
               title="Advance Simulation by one Tick"
             >
@@ -110,7 +154,7 @@ const GameScreen: React.FC<GameScreenProps> = ({
             </button>
             <button 
               onClick={onSaveGame}
-              disabled={isSimulationRunning}
+              disabled={isSimulationRunning || isImproving}
               className="flex items-center gap-2 px-4 py-2 bg-blue-800 text-blue-300 font-bold rounded-md transition-all duration-300 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
               title="Save Game State"
             >
@@ -119,7 +163,7 @@ const GameScreen: React.FC<GameScreenProps> = ({
             </button>
              <button 
               onClick={onReset}
-              disabled={isSimulationRunning}
+              disabled={isSimulationRunning || isImproving}
               className="flex items-center gap-2 px-4 py-2 bg-yellow-800 text-yellow-300 font-bold rounded-md transition-all duration-300 hover:bg-yellow-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
               title="Reset Game"
             >
@@ -136,14 +180,14 @@ const GameScreen: React.FC<GameScreenProps> = ({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               className="bg-transparent border-none text-green-400 w-full focus:outline-none disabled:text-gray-600"
-              disabled={isSimulationRunning}
-              placeholder={isSimulationRunning ? 'Simulation in progress...' : 'Enter your command...'}
+              disabled={isSimulationRunning || isImproving}
+              placeholder={getPlaceholder()}
             />
-            {!isSimulationRunning && <BlinkingCursor />}
+            {!(isSimulationRunning || isImproving) && <BlinkingCursor />}
           </div>
         </form>
       </div>
-      <StatusPanel worldModel={worldModel} />
+      <StatusPanel worldModel={worldModel} mutationLog={mutationLog} />
     </div>
   );
 };
