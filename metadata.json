@@ -1,0 +1,5 @@
+{
+  "name": "Advanced ASCII Text Adventure",
+  "description": "A deterministic text-adventure simulation engine that converts plain-text narratives into a structured, auditable world model and runs a live text-adventure simulation using AI.",
+  "requestFramePermissions": []
+}
