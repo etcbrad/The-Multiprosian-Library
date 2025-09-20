@@ -1,6 +1,8 @@
 
+
 export enum GameState {
   UPLOADING = 'UPLOADING',
+  FETCHING = 'FETCHING',
   PROCESSING = 'PROCESSING',
   PLAYING = 'PLAYING',
   ERROR = 'ERROR',
@@ -19,6 +21,11 @@ export interface Provenance {
   character_offsets: [number, number];
 }
 
+export interface Relationship {
+    characterName: string;
+    relationship: string;
+}
+
 // Fix: Export interface to be consumable by other modules.
 export interface Character {
   name: string;
@@ -27,7 +34,7 @@ export interface Character {
   traits: string[];
   goals: string[];
   dialogue_style: string;
-  relationships: Record<string, string>; // e.g. { "CharacterID": "ally" }
+  relationships: Relationship[];
   provenance: Provenance;
 }
 
@@ -42,24 +49,56 @@ export interface Setting {
   provenance: Provenance;
 }
 
+export interface ObjectProperty {
+    key: string;
+    value: string;
+}
+
+export interface WorldObject {
+    name: string;
+    properties: ObjectProperty[];
+}
+
+export interface CharacterLocation {
+    characterName: string;
+    locationName: string;
+}
+
+export interface ObjectLocation {
+    objectName: string;
+    locationName: string;
+}
+
+export interface FactionInfluence {
+    factionName: string;
+    influence: number;
+}
+
+export interface EnvironmentState {
+    weather: string; // e.g., "Clear", "Rainy", "Foggy"
+    lighting: string; // e.g., "Bright Daylight", "Dim Twilight", "Pitch Black"
+}
+
+
 // Fix: Export interface to be consumable by other modules. This resolves the main error.
 export interface WorldState {
   current_location: string;
   time: string; // e.g., "Day 1, Morning"
+  environment: EnvironmentState;
   player_inventory: string[];
-  character_locations: Record<string, string>; // { "CharacterID": "LocationID" }
-  object_locations: Record<string, string>; // { "ObjectID": "LocationID" or "CharacterID" }
-  factional_influence: Record<string, number>;
+  character_locations: CharacterLocation[];
+  object_locations: ObjectLocation[];
+  factional_influence: FactionInfluence[];
   initial_description: string;
 }
 
 export interface WorldModel {
   vocabulary: Record<string, any>;
   adaptive_vocabulary_log: any[];
-  characters: Record<string, Character>;
+  characters: Character[];
   archetypes: Record<string, string>;
-  settings: Record<string, Setting>;
-  objects: Record<string, any>;
+  settings: Setting[];
+  objects: WorldObject[];
   events: any[];
   relationships: Record<string, any>;
   knowledge_graph: { nodes: any[], edges: any[] };

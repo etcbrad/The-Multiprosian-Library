@@ -1,5 +1,5 @@
 {
-  "name": "Advanced ASCII Text Adventure",
-  "description": "A deterministic text-adventure simulation engine that converts plain-text narratives into a structured, auditable world model and runs a live text-adventure simulation using AI.",
+  "name": "Multiprosian Library Adventure",
+  "description": "Explore the vast, procedurally generated stacks of the Multiprosian Library in this text-based adventure powered by a deterministic AI simulation engine.",
   "requestFramePermissions": []
 }

@@ -1,13 +1,14 @@
 
+
 import React from 'react';
 import { WorldModel } from '../types';
 
 const StatusPanel: React.FC<{ worldModel: WorldModel }> = ({ worldModel }) => {
     const { world_state, characters } = worldModel;
-    const { current_location, time, player_inventory, character_locations } = world_state;
+    const { current_location, time, player_inventory, character_locations, environment } = world_state;
 
-    const charactersInLocation = Object.values(characters).filter(
-        char => character_locations[char.name] === current_location
+    const charactersInLocation = characters.filter(
+        char => character_locations.some(loc => loc.characterName === char.name && loc.locationName === current_location)
     );
 
     return (
@@ -23,6 +24,12 @@ const StatusPanel: React.FC<{ worldModel: WorldModel }> = ({ worldModel }) => {
                 <div>
                     <h4 className="font-bold text-green-300">Time</h4>
                     <p>{time}</p>
+                </div>
+
+                <div>
+                    <h4 className="font-bold text-green-300">Environment</h4>
+                    <p>Weather: {environment?.weather || 'N/A'}</p>
+                    <p>Lighting: {environment?.lighting || 'N/A'}</p>
                 </div>
                 
                 <div>

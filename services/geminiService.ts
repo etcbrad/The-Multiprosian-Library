@@ -1,3 +1,5 @@
+
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { WorldModel, WorldState, AdventureLogEntry, Character } from '../types';
 import { FULL_PROMPT_PIPELINE } from '../constants';
@@ -9,28 +11,126 @@ if (!process.env.API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+// Schemas for nested objects to satisfy API validation
+const relationshipSchema = {
+    type: Type.OBJECT,
+    properties: {
+        characterName: { type: Type.STRING },
+        relationship: { type: Type.STRING },
+    },
+    required: ['characterName', 'relationship']
+};
+
+const characterSchema = {
+    type: Type.OBJECT,
+    properties: {
+        name: { type: Type.STRING },
+        aliases: { type: Type.ARRAY, items: { type: Type.STRING } },
+        personality: { type: Type.ARRAY, items: { type: Type.STRING } },
+        traits: { type: Type.ARRAY, items: { type: Type.STRING } },
+        goals: { type: Type.ARRAY, items: { type: Type.STRING } },
+        dialogue_style: { type: Type.STRING },
+        relationships: { type: Type.ARRAY, items: relationshipSchema },
+    },
+    required: ['name', 'personality', 'goals', 'relationships']
+};
+
+const settingSchema = {
+    type: Type.OBJECT,
+    properties: {
+        name: { type: Type.STRING },
+        time_cues: { type: Type.ARRAY, items: { type: Type.STRING } },
+        geography: { type: Type.STRING },
+        culture: { type: Type.STRING },
+        climate: { type: Type.STRING },
+        ambience_descriptors: { type: Type.ARRAY, items: { type: Type.STRING } },
+    },
+    required: ['name', 'ambience_descriptors']
+};
+
+const objectPropertySchema = {
+    type: Type.OBJECT,
+    properties: {
+        key: { type: Type.STRING },
+        value: { type: Type.STRING },
+    },
+    required: ['key', 'value']
+};
+
+const objectSchema = {
+    type: Type.OBJECT,
+    properties: {
+        name: { type: Type.STRING },
+        properties: { type: Type.ARRAY, items: objectPropertySchema },
+    },
+    required: ['name', 'properties']
+};
+
+const worldStateProperties = {
+    current_location: { type: Type.STRING },
+    time: { type: Type.STRING },
+    environment: {
+        type: Type.OBJECT,
+        properties: {
+            weather: { type: Type.STRING },
+            lighting: { type: Type.STRING },
+        },
+        required: ['weather', 'lighting']
+    },
+    player_inventory: { type: Type.ARRAY, items: { type: Type.STRING } },
+    character_locations: {
+        type: Type.ARRAY,
+        items: {
+            type: Type.OBJECT,
+            properties: {
+                characterName: { type: Type.STRING },
+                locationName: { type: Type.STRING },
+            },
+            required: ["characterName", "locationName"],
+        }
+    },
+    object_locations: {
+        type: Type.ARRAY,
+        items: {
+            type: Type.OBJECT,
+            properties: {
+                objectName: { type: Type.STRING },
+                locationName: { type: Type.STRING },
+            },
+            required: ["objectName", "locationName"],
+        }
+    },
+    factional_influence: {
+        type: Type.ARRAY,
+        items: {
+            type: Type.OBJECT,
+            properties: {
+                factionName: { type: Type.STRING },
+                influence: { type: Type.NUMBER },
+            },
+            required: ["factionName", "influence"],
+        }
+    },
+    initial_description: { type: Type.STRING, description: "A compelling, paragraph-long description of the starting scene for the player." }
+};
+
+const worldStateRequired = ['current_location', 'time', 'environment', 'player_inventory', 'character_locations', 'object_locations', 'factional_influence', 'initial_description'];
+
+
 const worldModelSchema = {
     type: Type.OBJECT,
     properties: {
         world_state: {
             type: Type.OBJECT,
-            properties: {
-                current_location: { type: Type.STRING },
-                time: { type: Type.STRING },
-                player_inventory: { type: Type.ARRAY, items: { type: Type.STRING } },
-                character_locations: { type: Type.OBJECT },
-                object_locations: { type: Type.OBJECT },
-                factional_influence: { type: Type.OBJECT },
-                initial_description: { type: Type.STRING, description: "A compelling, paragraph-long description of the starting scene for the player." }
-            },
-            required: ['current_location', 'time', 'player_inventory', 'initial_description']
+            properties: worldStateProperties,
+            required: worldStateRequired
         },
-        characters: { type: Type.OBJECT },
-        settings: { type: Type.OBJECT },
-        objects: { type: Type.OBJECT },
+        characters: { type: Type.ARRAY, items: characterSchema },
+        settings: { type: Type.ARRAY, items: settingSchema },
+        objects: { type: Type.ARRAY, items: objectSchema },
         // Add other top-level keys as needed, keeping it minimal for performance
     },
-    required: ['world_state', 'characters', 'settings']
+    required: ['world_state', 'characters', 'settings', 'objects']
 };
 
 
@@ -61,8 +161,8 @@ const commandResponseSchema = {
         narrative: { type: Type.STRING },
         updatedWorldState: {
             type: Type.OBJECT,
-             properties: worldModelSchema.properties.world_state.properties,
-             required: worldModelSchema.properties.world_state.required,
+             properties: worldStateProperties,
+             required: worldStateRequired,
         }
     },
     required: ['narrative', 'updatedWorldState']
@@ -70,7 +170,7 @@ const commandResponseSchema = {
 
 export const processPlayerCommand = async (
     currentWorldState: WorldState,
-    characters: Record<string, Character>,
+    characters: Character[],
     adventureLog: AdventureLogEntry[],
     command: string
 ): Promise<{ narrative: string, updatedWorldState: WorldState }> => {
@@ -84,9 +184,9 @@ export const processPlayerCommand = async (
     
     The player now enters the command: "${command}"
 
-    Based on the world state and the command, generate the next narrative description for the player.
+    Based on the world state and command, generate a single, impactful sentence describing the outcome for the player.
     When generating dialogue or actions for characters, you MUST consider their specified personality, traits, and goals.
-    Your response must be a JSON object with two keys: "narrative" (a string for the player) and "updatedWorldState" (the modified world state object after the command). The updatedWorldState must retain the same schema as the original. Be descriptive and engaging in your narrative.
+    Your response must be a JSON object with two keys: "narrative" (a single sentence for the player) and "updatedWorldState" (the modified world state object after the command). The updatedWorldState must retain the same schema as the original.
     `;
 
     const response = await ai.models.generateContent({
@@ -109,7 +209,7 @@ export const processPlayerCommand = async (
 
 export const advanceSimulation = async (
     currentWorldState: WorldState,
-    characters: Record<string, Character>,
+    characters: Character[],
     adventureLog: AdventureLogEntry[]
 ): Promise<{ narrative: string, updatedWorldState: WorldState }> => {
 
@@ -118,24 +218,23 @@ export const advanceSimulation = async (
 
     **Core Directives:**
     1.  **Character-Driven Action (Priority):** Your primary goal is to generate proactive, autonomous actions for the characters. Instead of just describing the environment, make a character *do* something based on their internal state.
-        -   **Analyze Personality & Goals:** For each character, examine their \`personality\`, \`traits\`, and \`goals\`. A 'brave' character might confront a danger. A character with the goal "avenge my family" should take steps towards that, even if small.
-        -   **Consider Relationships:** A character's action might be influenced by their relationship to others. An 'ally' might offer help, while a 'rival' might create an obstacle.
-        -   **Create Narrative Progress:** The chosen action should move that character's personal story forward. The world should feel alive with independent agents pursuing their own agendas. For example, instead of "The wind howls," a better tick would be "Driven by a desire for ancient lore, Elara ventures into the library's forbidden section."
+        -   **Analyze Personality & Goals:** For each character, examine their \`personality\`, \`traits\`, and especially their \`goals\`. A character with the goal "avenge my family" MUST take steps towards that, even if small. A 'curious' character might investigate something. Their action should be a direct consequence of their stated ambitions.
+        -   **Create Narrative Progress:** The chosen action should move that character's personal story forward. The world should feel alive with independent agents pursuing their own agendas. For example, instead of "The wind howls," a better tick would be "Driven by his goal to find the Sunstone, Arion consults the ancient map he carries."
 
-    2.  **Environmental Dynamics (Secondary):** If no character has a strong motivation to act in this tick, you may generate a small environmental event. This should be a logical change to the setting (e.g., the weather changes, a patrol passes by, an object falls).
+    2.  **Environmental Dynamics (Secondary):** If no character has a strong motivation to act in this tick, you may generate a small environmental event. This should be a logical change to the setting's 'environment' object (e.g., weather changes from 'Sunny' to 'Cloudy', lighting changes from 'Daylight' to 'Twilight').
 
     3.  **Causality & Consistency:** The event you generate must be a logical consequence of the current \`world_state\` and the story so far.
 
     4.  **Output Requirements:**
-        -   **Narrative:** The narrative output must be a single, descriptive paragraph focusing on the most significant event of this tick.
-        -   **State Update:** You MUST update the \`world_state\` JSON to reflect the outcome of the event. This includes time, locations, relationships, or inventories. The updatedWorldState must retain the same schema as the original.
+        -   **Narrative:** The narrative output must be a single, impactful sentence describing the most significant event of this tick.
+        -   **State Update:** You MUST update the \`world_state\` JSON to reflect the outcome of the event. This includes time, locations, relationships, inventories, or the environment. The updatedWorldState must retain the same schema as the original.
 
     The current world state is: ${JSON.stringify(currentWorldState, null, 2)}
     The characters are: ${JSON.stringify(characters, null, 2)}
     The story so far:
     ${adventureLog.map(entry => `${entry.type === 'command' ? '> ' : ''}${entry.content}`).join('\n')}
 
-    Now, advance the simulation by one tick. Your response must be a JSON object with two keys: "narrative" (a string to be shown to the player) and "updatedWorldState" (the modified world state object after the event).
+    Now, advance the simulation by one tick. Your response must be a JSON object with two keys: "narrative" (a single sentence to be shown to the player) and "updatedWorldState" (the modified world state object after the event).
     `;
 
     const response = await ai.models.generateContent({
@@ -161,20 +260,21 @@ export const generateAsciiArt = async (description: string, worldModel: WorldMod
     let themeKeywords = ['abstract', 'mysterious'];
     let atmosphere = 'mysterious';
     let archetypalInfluences: string[] = [];
+    let objectsPresentDetails: string[] = [];
+    let charactersPresentDetails: string[] = [];
 
     if (worldModel) {
-        const { world_state, settings, archetypes } = worldModel;
+        const { world_state, settings, archetypes, characters, objects } = worldModel;
         const currentLocationName = world_state.current_location;
         
         // 1. Get setting info for theme and atmosphere
-        const setting = Object.values(settings).find(s => s.name === currentLocationName);
+        const setting = settings.find(s => s.name === currentLocationName);
         if (setting) {
-            // Use a Set to avoid duplicate keywords from culture, geography, and ambience
             const keywords = new Set<string>();
             
             setting.ambience_descriptors.forEach(desc => keywords.add(desc.toLowerCase()));
             keywords.add(setting.geography.toLowerCase());
-            keywords.add(setting.culture.toLowerCase());
+            if (setting.culture) keywords.add(setting.culture.toLowerCase());
             
             if (keywords.size > 0) {
                 themeKeywords = Array.from(keywords);
@@ -184,15 +284,35 @@ export const generateAsciiArt = async (description: string, worldModel: WorldMod
             }
         }
         
-        // 2. Get archetypes of characters present for stylistic influence
-        const charactersInLocation = Object.keys(world_state.character_locations).filter(
-            charName => world_state.character_locations[charName] === currentLocationName
+        // 2. Get full character objects for characters in the current location
+        const charactersInLocation = characters.filter(
+            char => world_state.character_locations.some(
+                loc => loc.characterName === char.name && loc.locationName === currentLocationName
+            )
         );
-        
-        charactersInLocation.forEach(charName => {
-            if (archetypes && archetypes[charName]) {
-                archetypalInfluences.push(archetypes[charName]);
+
+        // 3. Extract character details (archetypes, personality)
+        charactersInLocation.forEach(char => {
+            if (archetypes && archetypes[char.name]) {
+                archetypalInfluences.push(archetypes[char.name]);
             }
+            const personalitySnippet = char.personality.slice(0, 2).join(', ');
+            charactersPresentDetails.push(`${char.name} (${personalitySnippet})`);
+        });
+
+        // 4. Get full object details for objects in the current location
+        const objectNamesInLocation = world_state.object_locations
+            .filter(loc => loc.locationName === currentLocationName)
+            .map(loc => loc.objectName);
+        
+        const objectsInLocation = objects.filter(obj => objectNamesInLocation.includes(obj.name));
+
+        objectsInLocation.forEach(obj => {
+            const propertiesSnippet = obj.properties
+                .slice(0, 2)
+                .map(p => p.value)
+                .join(', ');
+            objectsPresentDetails.push(`${obj.name}${propertiesSnippet ? ` (${propertiesSnippet})` : ''}`);
         });
     }
 
@@ -200,14 +320,17 @@ export const generateAsciiArt = async (description: string, worldModel: WorldMod
 You are the AdaptiveASCIIEngine from the Multiprose Engine framework. Your task is to generate dynamic ASCII art that visually represents the narrative and world state parameters.
 
 **Core Directives:**
-1.  **Synthesize Influences:** Create ASCII art by synthesizing the theme, atmosphere, and archetypal influences provided below. Do not just pick one; blend the concepts. For example, if the theme is 'cave' and an archetype is 'Mentor', the art could be a wise, glowing rune on a cave wall.
-2.  **Match the Scene:** The art must visually represent the provided narrative scene.
-3.  **Output Constraints:** The final output must be ONLY the raw ASCII art. Do not include any surrounding text, explanations, or markdown code fences like \`\`\`. The art must be suitable for a monospaced terminal display.
+1.  **Synthesize Influences:** Create ASCII art by synthesizing all the provided context. Blend the concepts. For example, if the theme is 'library', a character is 'curious', and an object is a 'glowing book', the art should depict a character leaning over a radiant tome amidst towering bookshelves.
+2.  **Incorporate Specifics:** The art must visually represent the provided narrative scene. You must incorporate the specific characters and objects listed below into the scene. Their unique traits and properties should influence the art's style and content. A 'stoic' character might be drawn with straight, rigid lines, while a 'chaotic' one might have more abstract, swirling patterns.
+3.  **Dynamic Glyphs:** To give the scene a sense of life and subtle motion, strategically place simple Unicode glyphs (like '░', '▒', '▓', '※', '⁂', '✧') or flickering characters to represent energy, magic, wind, rain, or other dynamic effects. This should create the illusion of a 'static animation' where the scene feels alive even in a single frame.
+4.  **Output Constraints:** The final output must be ONLY the raw ASCII art. Do not include any surrounding text, explanations, or markdown code fences like \`\`\`. The art must be suitable for a monospaced terminal display.
 
 **Configuration for this frame:**
 -   **Theme Keywords:** "${themeKeywords.join(', ')}" (Use these words to guide the core subject and style of the art.)
 -   **Atmosphere:** "${atmosphere || 'neutral'}" (This should guide the mood of the art - e.g., 'eerie', 'serene', 'bustling'.)
--   **Archetypal Influences Present:** "${archetypalInfluences.length > 0 ? archetypalInfluences.join(', ') : 'None'}" (If present, let these roles subtly influence the art's character. A 'Hero' might suggest something bold or central. A 'Trickster' might suggest something chaotic or hidden.)
+-   **Archetypal Influences:** "${archetypalInfluences.length > 0 ? archetypalInfluences.join(', ') : 'None'}" (Let these roles subtly influence the art's character. A 'Hero' might suggest something bold or central.)
+-   **Characters Present:** "${charactersPresentDetails.length > 0 ? charactersPresentDetails.join(', ') : 'None'}" (Reflect the personality and state of these characters in the scene's composition and mood.)
+-   **Objects Present:** "${objectsPresentDetails.length > 0 ? objectsPresentDetails.join(', ') : 'None'}" (Visually include these objects in the generated art.)
 -   **Narrative Context / Scene:** "${description}"
 
 Generate the ASCII art now.

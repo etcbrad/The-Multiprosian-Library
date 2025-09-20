@@ -1,16 +1,41 @@
-
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { GameState, WorldModel, AdventureLogEntry, SaveGame } from './types';
 import FileUploadScreen from './components/FileUploadScreen';
 import ProcessingScreen from './components/ProcessingScreen';
+import FetchingScreen from './components/FetchingScreen';
 import GameScreen from './components/GameScreen';
 import { generateWorldModel, processPlayerCommand, advanceSimulation, generateAsciiArt } from './services/geminiService';
+import { GUTENBERG_URLS } from './constants';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Setup PDF.js worker. Note: This is a URL to a CDN.
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs`;
+
+/**
+ * Extracts text content from a PDF file.
+ * @param file The PDF file to process.
+ * @returns A promise that resolves to the text content of the PDF.
+ */
+const extractTextFromPdf = async (file: File): Promise<string> => {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer)).promise;
+    let fullText = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => ('str' in item ? item.str : '')).join(' ');
+        fullText += pageText + '\n\n'; // Add double newline for paragraph breaks between pages
+    }
+    return fullText;
+};
+
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.UPLOADING);
   const [worldModel, setWorldModel] = useState<WorldModel | null>(null);
   const [adventureLog, setAdventureLog] = useState<AdventureLogEntry[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fetchingMessage, setFetchingMessage] = useState<string>('');
 
   const [isTicking, setIsTicking] = useState(false);
   const [isAutoSimulating, setIsAutoSimulating] = useState(false);
@@ -46,9 +71,9 @@ const App: React.FC = () => {
     setGameState(GameState.PROCESSING);
     setErrorMessage(null);
     try {
-      const fileContent = await file.text();
       if (file.name.endsWith('.json')) {
         // Handle loading a save game file
+        const fileContent = await file.text();
         const saveData: SaveGame = JSON.parse(fileContent);
         if (saveData.worldModel && saveData.adventureLog) {
           setWorldModel(saveData.worldModel);
@@ -58,8 +83,15 @@ const App: React.FC = () => {
           throw new Error("Invalid save file format.");
         }
       } else {
-        // Handle generating a new game from a narrative file
-        const model = await generateWorldModel(fileContent);
+        // Handle generating a new game from a narrative file (txt, md, pdf)
+        let narrativeText: string;
+        if (file.name.endsWith('.pdf')) {
+          narrativeText = await extractTextFromPdf(file);
+        } else {
+          narrativeText = await file.text();
+        }
+        
+        const model = await generateWorldModel(narrativeText);
         setWorldModel(model);
         const initialEntry: AdventureLogEntry = { type: 'narrative', content: model.world_state.initial_description || "Your adventure begins." };
         setAdventureLog([initialEntry]);
@@ -76,6 +108,39 @@ const App: React.FC = () => {
       setGameState(GameState.UPLOADING);
     }
   }, []);
+
+  const handleFetchRandom = useCallback(async () => {
+    setGameState(GameState.FETCHING);
+    setErrorMessage(null);
+    try {
+        const randomIndex = Math.floor(Math.random() * GUTENBERG_URLS.length);
+        const selectedNarrative = GUTENBERG_URLS[randomIndex];
+        setFetchingMessage(`Fetching "${selectedNarrative.title}"...`);
+
+        // NOTE: The Project Gutenberg URLs may have CORS issues when called directly from a browser.
+        // A simple CORS proxy can solve this. For this example, we'll use a public proxy.
+        // In a production environment, you should host your own.
+        const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
+        const response = await fetch(proxyUrl + selectedNarrative.url);
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch from archive: ${response.statusText}`);
+        }
+        const text = await response.text();
+        const file = new File([text], `${selectedNarrative.title.replace(/\s/g, '_')}.txt`, { type: 'text/plain' });
+        
+        // Brief pause to show the fetching message
+        setTimeout(() => {
+            handleFileUploaded(file);
+        }, 500);
+
+    } catch (error) {
+        console.error("Failed to fetch random narrative:", error);
+        const err = error as Error;
+        setErrorMessage(`Failed to fetch from archive: ${err.message}. Please try again.`);
+        setGameState(GameState.UPLOADING);
+    }
+  }, [handleFileUploaded]);
   
   const handleSaveGame = useCallback(() => {
     if (!worldModel || !adventureLog) return;
@@ -90,7 +155,7 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `ascii-adventure-save-${new Date().toISOString().replace(/:/g, '-')}.json`;
+    a.download = `multiprosian-library-save-${new Date().toISOString().replace(/:/g, '-')}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -199,7 +264,9 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (gameState) {
       case GameState.UPLOADING:
-        return <FileUploadScreen onFileUploaded={handleFileUploaded} errorMessage={errorMessage} />;
+        return <FileUploadScreen onFileUploaded={handleFileUploaded} onFetchRandom={handleFetchRandom} errorMessage={errorMessage} />;
+      case GameState.FETCHING:
+        return <FetchingScreen message={fetchingMessage} />;
       case GameState.PROCESSING:
         return <ProcessingScreen />;
       case GameState.PLAYING:
@@ -216,7 +283,7 @@ const App: React.FC = () => {
           onReset={handleReset}
         />;
       default:
-        return <FileUploadScreen onFileUploaded={handleFileUploaded} errorMessage="An unknown error occurred." />;
+        return <FileUploadScreen onFileUploaded={handleFileUploaded} onFetchRandom={handleFetchRandom} errorMessage="An unknown error occurred." />;
     }
   };
 
@@ -226,7 +293,7 @@ const App: React.FC = () => {
         {renderContent()}
       </div>
        <footer className="text-center text-xs text-green-700 mt-2">
-            Advanced ASCII Text Adventure Engine v0.4.0
+            Multiprosian Library Adventure Engine v0.5.0
         </footer>
     </main>
   );
