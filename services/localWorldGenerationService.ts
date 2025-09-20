@@ -129,6 +129,17 @@ const findObjects = (text: string, genreTitle: string): WorldObject[] => {
         ]});
     }
 
+    if (genreTitle === "Down the Rabbit-Hole") {
+        objects.push({
+            name: "Small Cake",
+            properties: [
+                { key: "is_edible", value: "true" },
+                { key: "feature", value: "Decorated with the words 'EAT ME' in currants." },
+                { key: "effect", value: "You suddenly feel yourself growing much larger!" }
+            ]
+        });
+    }
+
     return objects;
 }
 
@@ -162,6 +173,14 @@ export const generateLocalWorldModel = (genre: AdventureGenre): WorldModel => {
         // Put the goblet in the chest
         const gobletLoc = object_locations.find(ol => ol.objectName === "Golden Goblet");
         if (gobletLoc) gobletLoc.locationName = "Iron-bound Chest";
+    }
+
+    // Custom logic for placing adventure-specific objects
+    if (title === "Down the Rabbit-Hole") {
+        const cakeLocation = object_locations.find(ol => ol.objectName === "Small Cake");
+        if (cakeLocation) {
+            cakeLocation.locationName = "The Rabbit-Hole";
+        }
     }
 
 

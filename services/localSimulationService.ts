@@ -25,7 +25,7 @@ const proceduralGenerate = (grammar: Record<string, string[]>, startSymbol: stri
 };
 
 // --- Utilities for object properties ---
-const getObjectProp = (obj: WorldObject, key: string): string | undefined => obj.properties.find(p => p.key === key)?.value;
+const getObjectProp = (obj: WorldObject | undefined, key: string): string | undefined => obj?.properties.find(p => p.key === key)?.value;
 const setObjectProp = (obj: WorldObject, key: string, value: string) => {
     const prop = obj.properties.find(p => p.key === key);
     if (prop) prop.value = value;
@@ -291,13 +291,16 @@ const handleClose = (worldModel: WorldModel, parsedCmd: ParsedCommand): string =
 }
 
 const handleUse = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    // Fix: Destructure world_state for consistency.
     const { world_state } = worldModel;
     const {dobj, iobj} = parsedCmd;
     if (!dobj || !iobj) return "What do you want to use on what?";
 
-    const tool = worldModel.objects.find(o => o.name.toLowerCase() === dobj && world_state.player_inventory.includes(o.name));
-    if (!tool) return `You don't have a ${dobj}.`;
+    // Check for tool in inventory OR location
+    const toolInInventory = worldModel.objects.find(o => o.name.toLowerCase() === dobj && world_state.player_inventory.includes(o.name));
+    const toolInLocation = worldModel.objects.find(o => o.name.toLowerCase() === dobj && world_state.object_locations.some(ol => ol.objectName === o.name && ol.locationName === world_state.current_location));
+    const tool = toolInInventory || toolInLocation;
+
+    if (!tool) return `You don't have or see a ${dobj}.`;
 
     const target = worldModel.objects.find(o => o.name.toLowerCase() === iobj && world_state.object_locations.some(ol => ol.objectName === o.name && ol.locationName === world_state.current_location));
     if (!target) return `You don't see a ${iobj} here.`;
@@ -307,6 +310,14 @@ const handleUse = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => 
 
     if (getObjectProp(target, 'is_locked') === 'true' && toolId && toolId === targetKeyId) {
         setObjectProp(target, 'is_locked', 'false');
+        
+        // If the tool was used from the location, automatically pick it up.
+        if (toolInLocation && !toolInInventory) {
+            world_state.player_inventory.push(tool.name);
+            const locIndex = world_state.object_locations.findIndex(ol => ol.objectName === tool.name && ol.locationName === world_state.current_location);
+            if(locIndex > -1) world_state.object_locations.splice(locIndex, 1);
+            return `You pick up the ${tool.name} and use it on the ${target.name}. It unlocks with a click.`;
+        }
         return `You use the ${tool.name} on the ${target.name}. It unlocks with a click.`;
     }
 
@@ -333,6 +344,43 @@ const handleShave = (worldModel: WorldModel, parsedCmd: ParsedCommand): string =
     return "You have nothing to shave with.";
 };
 
+const handleEat = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
+    const { world_state, objects } = worldModel;
+    const itemName = parsedCmd.dobj;
+    if (!itemName) return "What do you want to eat?";
+
+    const lowerItemName = itemName.toLowerCase();
+
+    // Check inventory or location for the item
+    const itemInInventory = world_state.player_inventory.find(invItem => invItem.toLowerCase().includes(lowerItemName));
+    const itemInLocationObj = world_state.object_locations.find(
+        locItem => locItem.locationName === world_state.current_location && locItem.objectName.toLowerCase().includes(lowerItemName)
+    );
+    const itemInLocation = itemInLocationObj ? itemInLocationObj.objectName : undefined;
+    const targetItemName = itemInInventory || itemInLocation;
+
+    if (!targetItemName) {
+        return `You don't have or see any ${itemName} to eat.`;
+    }
+
+    const itemObject = objects.find(o => o.name === targetItemName);
+    if (getObjectProp(itemObject, 'is_edible') !== 'true') {
+        return `You can't eat the ${targetItemName}.`;
+    }
+    
+    // Consume the item
+    if (itemInInventory) {
+        const invIndex = world_state.player_inventory.findIndex(i => i === targetItemName);
+        if (invIndex > -1) world_state.player_inventory.splice(invIndex, 1);
+    } else if (itemInLocation) {
+        const locIndex = world_state.object_locations.findIndex(ol => ol.objectName === targetItemName && ol.locationName === world_state.current_location);
+        if (locIndex > -1) world_state.object_locations.splice(locIndex, 1);
+    }
+
+    const effect = getObjectProp(itemObject, 'effect');
+    return effect ? `You eat the ${targetItemName}. ${effect}` : `You eat the ${targetItemName}. It's quite tasty.`;
+};
+
 
 const commandHandlers: Record<string, (model: WorldModel, parsedCmd: ParsedCommand) => string> = {
     'look': handleLook, 'l': handleLook, 'examine': handleLook,
@@ -346,6 +394,7 @@ const commandHandlers: Record<string, (model: WorldModel, parsedCmd: ParsedComma
     'close': handleClose,
     'use': handleUse,
     'shave': handleShave,
+    'eat': handleEat,
 };
 
 /**
