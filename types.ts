@@ -1,10 +1,12 @@
 
 
 export type EngineMode = 'offline' | 'online';
+export type GameMode = 'Narrative' | 'Open World';
 
 export enum GameState {
   UPLOADING = 'UPLOADING',
   GENRE_SELECTION = 'GENRE_SELECTION',
+  MODE_SELECTION = 'MODE_SELECTION',
   LOADING = 'LOADING',
   PROCESSING = 'PROCESSING',
   PLAYING = 'PLAYING',
@@ -96,11 +98,17 @@ export interface EnvironmentState {
     lighting: string; // e.g., "Dim Twilight", "Pitch Black"
 }
 
+export interface Objective {
+    description: string;
+    is_completed: boolean;
+}
 
 // Fix: Export interface to be consumable by other modules. This resolves the main error.
 export interface WorldState {
   current_location: string;
   time: string; // e.g., "Day 1, Morning"
+  mode: GameMode;
+  objectives: Objective[];
   environment: EnvironmentState;
   player_inventory: string[];
   character_locations: CharacterLocation[];

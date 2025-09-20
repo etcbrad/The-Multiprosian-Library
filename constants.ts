@@ -52,6 +52,11 @@ There was nothing so VERY remarkable in that; nor did Alice think it so VERY muc
         description: "You awaken in a dusty room filled with strange contraptions. The only door is locked from the outside. Can you find a way to escape?",
         narrative: `You find yourself in a cluttered alchemist's study. Sunlight streams through a grimy window high on one wall, illuminating swirling dust motes. A heavy oak door stands securely shut. The room is filled with shelves of strange ingredients and a thick, leather-bound book. A large, iron-bound chest sits on the floor against the far wall.`
     },
+     {
+        title: "Prometheus Unbound",
+        description: "A gothic sci-fi tale of ambition and consequence. You awaken in a desolate laboratory, a creation of questionable morality.",
+        narrative: `It was on a dreary night of November that I beheld the accomplishment of my toils. With an anxiety that almost amounted to agony, I collected the instruments of life around me, that I might infuse a spark of being into the lifeless thing that lay at my feet. It was already one in the morning; the rain pattered dismally against the panes, and my candle was nearly burnt out, when, by the glimmer of the half-extinguished light, I saw the dull yellow eye of the creature open; it breathed hard, and a convulsive motion agitated its limbs.`
+    },
     {
         title: "Telemachus",
         description: "Experience the stream of consciousness in a Martello tower overlooking the sea, where wit and tension fill the mild morning air.",

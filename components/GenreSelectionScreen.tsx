@@ -29,7 +29,7 @@ const GenreSelectionScreen: React.FC<GenreSelectionScreenProps> = ({ onGenreSele
       </h1>
       <h2 className="text-xl text-green-500 mb-8">Select a scenario to begin.</h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 w-full max-w-6xl mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 w-full max-w-6xl mb-8">
         {ADVENTURE_GENRES.map((genre) => (
           <button
             key={genre.title}

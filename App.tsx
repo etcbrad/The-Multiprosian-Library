@@ -1,10 +1,11 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { GameState, WorldModel, AdventureLogEntry, SaveGame, EngineMode, MutationLogEntry, ApiMutation, AdventureGenre, OfflineResources } from './types';
+import { GameState, WorldModel, AdventureLogEntry, SaveGame, EngineMode, MutationLogEntry, ApiMutation, AdventureGenre, OfflineResources, GameMode } from './types';
 import FileUploadScreen from './components/FileUploadScreen';
 import ProcessingScreen from './components/ProcessingScreen';
 import GameScreen from './components/GameScreen';
 import GenreSelectionScreen from './components/GenreSelectionScreen';
+import ModeSelectionScreen from './components/ModeSelectionScreen';
 import { generateWorldModel, requestEvolution, generateAsciiArt, requestOfflineResource } from './services/geminiService';
 import { localProcessPlayerCommand, localAdvanceSimulation, localRequestEvolution, localGenerateAsciiArt } from './services/localSimulationService';
 import { generateLocalWorldModel } from './services/localWorldGenerationService';
@@ -50,6 +51,8 @@ const App: React.FC = () => {
   const [isAutoSimulating, setIsAutoSimulating] = useState(false);
   const intervalRef = useRef<number | null>(null);
   
+  const [selectedGenre, setSelectedGenre] = useState<AdventureGenre | null>(null);
+
   // Refs to hold the latest state for use in callbacks without dependency issues.
   const worldModelRef = useRef(worldModel);
   useEffect(() => { worldModelRef.current = worldModel; }, [worldModel]);
@@ -74,6 +77,7 @@ const App: React.FC = () => {
     setAdventureLog([]);
     setErrorMessage(null);
     setMutationLog([]);
+    setSelectedGenre(null);
     stopAutoSimulation();
   }, [stopAutoSimulation]);
   
@@ -162,7 +166,7 @@ const App: React.FC = () => {
     setTimeout(() => {
         try {
             const randomGenre = ADVENTURE_GENRES[Math.floor(Math.random() * ADVENTURE_GENRES.length)];
-            const model = generateLocalWorldModel(randomGenre);
+            const model = generateLocalWorldModel(randomGenre, 'Open World'); // Default random to open world
             
             setWorldModel(model);
             const initialEntry: AdventureLogEntry = { type: 'narrative', content: model.world_state.initial_description || "Your adventure begins." };
@@ -186,11 +190,17 @@ const App: React.FC = () => {
   }, []);
 
   const handleGenreSelected = useCallback((genre: AdventureGenre) => {
+    setSelectedGenre(genre);
+    setGameState(GameState.MODE_SELECTION);
+  }, []);
+
+  const handleModeSelected = useCallback((mode: GameMode) => {
+    if (!selectedGenre) return;
     setGameState(GameState.PROCESSING);
     
     setTimeout(() => {
         try {
-            const model = generateLocalWorldModel(genre);
+            const model = generateLocalWorldModel(selectedGenre, mode);
             setWorldModel(model);
             const initialEntry: AdventureLogEntry = { type: 'narrative', content: model.world_state.initial_description || "Your adventure begins." };
             setAdventureLog([initialEntry]);
@@ -204,10 +214,14 @@ const App: React.FC = () => {
             setGameState(GameState.UPLOADING);
         }
     }, 2500); // Simulate processing time
-  }, [offlineResources.asciiArt]);
+  }, [selectedGenre, offlineResources.asciiArt]);
 
   const handleBackToUpload = useCallback(() => {
     setGameState(GameState.UPLOADING);
+  }, []);
+
+  const handleBackToGenre = useCallback(() => {
+    setGameState(GameState.GENRE_SELECTION);
   }, []);
   
   const handleSaveGame = useCallback(() => {
@@ -408,6 +422,8 @@ const App: React.FC = () => {
         return <FileUploadScreen onFileUploaded={handleFileUploaded} onLoadRandom={handleLoadRandom} onStartAdventure={handleStartAdventure} errorMessage={errorMessage} />;
       case GameState.GENRE_SELECTION:
         return <GenreSelectionScreen onGenreSelected={handleGenreSelected} onBack={handleBackToUpload} />;
+      case GameState.MODE_SELECTION:
+        return <ModeSelectionScreen onModeSelected={handleModeSelected} onBack={handleBackToGenre} />;
       case GameState.LOADING:
       case GameState.PROCESSING:
         return <ProcessingScreen />;

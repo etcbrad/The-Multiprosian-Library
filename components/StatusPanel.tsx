@@ -1,11 +1,11 @@
 import React from 'react';
-import { WorldModel, MutationLogEntry, WorldObject } from '../types';
-import { Bot, FilePlus, MessageSquarePlus, Clock } from 'lucide-react';
+import { WorldModel, MutationLogEntry, WorldObject, Objective } from '../types';
+import { Bot, FilePlus, MessageSquarePlus, Clock, Target, CheckCircle2, Circle } from 'lucide-react';
 import MapView from './MapView';
 
 const StatusPanel: React.FC<{ worldModel: WorldModel; mutationLog: MutationLogEntry[] }> = ({ worldModel, mutationLog }) => {
     const { world_state, characters } = worldModel;
-    const { current_location, time, player_inventory, character_locations, environment } = world_state;
+    const { current_location, time, player_inventory, character_locations, environment, mode, objectives } = world_state;
 
     const charactersInLocation = characters.filter(
         char => character_locations.some(loc => loc.characterName === char.name && loc.locationName === current_location)
@@ -38,6 +38,26 @@ const StatusPanel: React.FC<{ worldModel: WorldModel; mutationLog: MutationLogEn
             default:
                 return <p>Unknown mutation type.</p>
         }
+    }
+    
+    const renderObjectives = (objectives: Objective[]) => {
+        return (
+             <div>
+                <h4 className="font-bold text-green-300 flex items-center gap-2 mt-4 border-t border-green-800 pt-4"><Target size={16}/> Objectives</h4>
+                {objectives.length > 0 ? (
+                    <ul className="space-y-2 mt-2">
+                        {objectives.map(obj => (
+                            <li key={obj.description} className={`flex items-start gap-2 ${obj.is_completed ? 'text-gray-500 line-through' : ''}`}>
+                                {obj.is_completed ? <CheckCircle2 size={16} className="flex-shrink-0 mt-0.5"/> : <Circle size={16} className="flex-shrink-0 mt-0.5"/>}
+                                <span>{obj.description}</span>
+                            </li>
+                        ))}
+                    </ul>
+                ) : (
+                    <p className="text-green-600">None</p>
+                )}
+            </div>
+        )
     }
 
     return (
@@ -91,6 +111,8 @@ const StatusPanel: React.FC<{ worldModel: WorldModel; mutationLog: MutationLogEn
                         <p className="text-green-600">None</p>
                      )}
                 </div>
+
+                {mode === 'Narrative' && renderObjectives(objectives)}
 
                 <div>
                     <h4 className="font-bold text-green-300 flex items-center gap-2 mt-4 border-t border-green-800 pt-4"><Bot size={16}/> Mutation Log</h4>

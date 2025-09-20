@@ -6,44 +6,28 @@ import { WorldModel, WorldState, Setting, Character, ApiMutation, WorldObject, O
 const deepClone = <T>(obj: T): T => JSON.parse(JSON.stringify(obj));
 const randomChoice = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
-// --- NEW: Procedural Text Generation (Tracery-like) ---
+// --- UTILITIES FOR OBJECT & STATE MANIPULATION ---
 
-/**
- * A simple procedural grammar expansion utility.
- * Replaces #key# with a random value from the grammar's key.
- */
-const proceduralGenerate = (grammar: Record<string, string[]>, startSymbol: string = '#origin#'): string => {
-    let text = randomChoice(grammar[startSymbol.slice(1, -1)] || ['']);
-    const regex = /#(\w+)#/g;
-    for (let i = 0; i < 10; i++) { // Limit recursion to prevent infinite loops
-        let match = regex.exec(text);
-        if (!match) break;
-        text = text.replace(match[0], randomChoice(grammar[match[1]] || ['']));
-        regex.lastIndex = 0; // Reset regex index
-    }
-    return text;
-};
-
-// --- Utilities for object properties ---
 const getObjectProp = (obj: WorldObject | undefined, key: string): string | undefined => obj?.properties.find(p => p.key === key)?.value;
+
 const setObjectProp = (obj: WorldObject, key: string, value: string) => {
     const prop = obj.properties.find(p => p.key === key);
     if (prop) prop.value = value;
     else obj.properties.push({ key, value });
 };
 
-// --- Command Parser ---
 interface ParsedCommand {
     verb: string;
     dobj?: string; // direct object
     prep?: string; // preposition
     iobj?: string; // indirect object
 }
+
 const parseCommand = (command: string): ParsedCommand => {
     const commandLower = command.toLowerCase().trim();
     const parts = commandLower.split(/\s+/);
     const verb = parts[0];
-    const prepositions = ['on', 'in', 'from', 'with', 'at', 'to', 'inside'];
+    const prepositions = ['on', 'in', 'from', 'with', 'at', 'to', 'inside', 'using'];
     
     let prepIndex = -1;
     for (const prep of prepositions) {
@@ -66,339 +50,10 @@ const parseCommand = (command: string): ParsedCommand => {
     return { verb, dobj: parts.slice(1).join(' ') };
 }
 
-
-// --- Command Handlers ---
-
-const handleLook = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    const { world_state, settings, objects, characters } = worldModel;
-    const { dobj, prep, iobj } = parsedCmd;
-    const target = prep === 'in' || prep === 'inside' ? iobj : dobj;
-
-    // "look in [container]"
-    if (target) {
-        const container = objects.find(o => o.name.toLowerCase() === target && world_state.object_locations.some(ol => ol.objectName === o.name && ol.locationName === world_state.current_location));
-        if (container) {
-            if (getObjectProp(container, 'is_container') !== 'true') {
-                return `You can't look inside the ${container.name}.`;
-            }
-            if (getObjectProp(container, 'is_open') !== 'true') {
-                return `The ${container.name} is closed.`;
-            }
-            const contents = world_state.object_locations
-                .filter(ol => ol.locationName === container.name)
-                .map(ol => ol.objectName);
-            
-            if (contents.length > 0) {
-                return `Inside the ${container.name}, you see: ${contents.join(', ')}.`;
-            }
-            return `The ${container.name} is empty.`;
-        }
-
-        const entity = [...objects, ...characters].find(e => e.name.toLowerCase() === target);
-        if (entity) {
-            if ('properties' in entity) {
-                 return `${entity.name}: ${entity.properties.map(p => p.value).join(', ')}.`;
-            }
-            if ('personality' in entity) {
-                return `${entity.name} seems ${entity.personality.join(' and ')}. Their goal is to ${entity.goals.join(', ')}.`;
-            }
-        }
-        return `You see nothing special about the ${target}.`;
-    }
-
-    // "look"
-    const location = settings.find(s => s.name === world_state.current_location);
-    const charactersHere = world_state.character_locations
-        .filter(cl => cl.locationName === world_state.current_location)
-        .map(cl => cl.characterName);
-    const objectsHere = world_state.object_locations
-        .filter(ol => ol.locationName === world_state.current_location)
-        .map(ol => {
-            const obj = objects.find(o => o.name === ol.objectName);
-            if(obj && getObjectProp(obj, 'is_container') === 'true') {
-                return `${obj.name} (${getObjectProp(obj, 'is_open') === 'true' ? 'open' : 'closed'})`;
-            }
-            return ol.objectName;
-        });
-        
-    let narrative = `You are in ${world_state.current_location}. ${location?.ambience_descriptors.join(' ')}\n`;
-    if (charactersHere.length > 0) {
-        narrative += `You see: ${charactersHere.join(', ')}.\n`;
-    }
-    if (objectsHere.length > 0) {
-        narrative += `There is a ${objectsHere.join(', ')} here.`;
-    }
-    return narrative;
-};
-
-const handleInventory = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    // Fix: Destructure world_state for consistency and cleaner access.
-    const { world_state } = worldModel;
-    if (world_state.player_inventory.length === 0) {
-        return "You are not carrying anything.";
-    }
-    return `You have: ${world_state.player_inventory.join(', ')}.`;
-};
-
-const handleTake = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    // Fix: Destructure world_state to resolve reference error and improve consistency.
-    const { world_state } = worldModel;
-    const { dobj, iobj } = parsedCmd; // dobj = item, iobj = container
-    const itemName = dobj;
-    if (!itemName) return "What do you want to take?";
-
-    // Taking from a container?
-    if (iobj) {
-         const container = worldModel.objects.find(o => o.name.toLowerCase() === iobj && world_state.object_locations.some(ol => ol.objectName === o.name && ol.locationName === world_state.current_location));
-         if (!container) return `You don't see a ${iobj} here.`;
-         if (getObjectProp(container, 'is_open') !== 'true') return `The ${iobj} is closed.`;
-
-        const itemIndex = world_state.object_locations.findIndex(
-            ol => ol.locationName === container.name && ol.objectName.toLowerCase() === itemName
-        );
-        if (itemIndex > -1) {
-            const [item] = world_state.object_locations.splice(itemIndex, 1);
-            world_state.player_inventory.push(item.objectName);
-            return `You take the ${item.objectName} from the ${container.name}.`;
-        }
-        return `There is no ${itemName} in the ${container.name}.`;
-    }
-
-    // Taking from the room
-    const itemIndex = world_state.object_locations.findIndex(
-        ol => ol.locationName === world_state.current_location && ol.objectName.toLowerCase() === itemName
-    );
-    if (itemIndex > -1) {
-        const [item] = world_state.object_locations.splice(itemIndex, 1);
-        world_state.player_inventory.push(item.objectName);
-        return `You take the ${item.objectName}.`;
-    }
-    return "You don't see that here.";
-};
-
-const handleDrop = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    // Fix: Destructure world_state for consistency.
-    const { world_state } = worldModel;
-    const itemName = parsedCmd.dobj;
-    if (!itemName) return "What do you want to drop?";
-
-    const itemIndex = world_state.player_inventory.findIndex(
-        invItem => invItem.toLowerCase() === itemName
-    );
-    if (itemIndex > -1) {
-        const [item] = world_state.player_inventory.splice(itemIndex, 1);
-        world_state.object_locations.push({ objectName: item, locationName: world_state.current_location });
-        return `You drop the ${item}.`;
-    }
-    return "You don't have that.";
-};
-
-const handleGo = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    // Fix: Destructure world_state for consistency.
-    const { world_state } = worldModel;
-    const locationName = parsedCmd.dobj;
-    if (!locationName) return "Where do you want to go?";
-    
-    const foundSetting = worldModel.settings.find(s => s.name.toLowerCase().includes(locationName));
-    if (foundSetting) {
-        world_state.current_location = foundSetting.name;
-        return `You travel to ${foundSetting.name}.`;
-    }
-    return `You don't know how to get to a place called "${locationName}".`;
-};
-
-const handleTalkTo = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    const characterName = parsedCmd.dobj;
-    if (!characterName) return "Who do you want to talk to?";
-    const { world_state, characters } = worldModel;
-
-    const characterInLocation = characters.find(
-        char => char.name.toLowerCase() === characterName &&
-                world_state.character_locations.some(loc => loc.characterName === char.name && loc.locationName === world_state.current_location)
-    );
-
-    if (!characterInLocation) {
-        return `You don't see anyone named "${characterName}" here.`;
-    }
-
-    const { name, personality } = characterInLocation;
-    if (personality.includes('hurried') || personality.includes('anxious')) {
-        return `"${randomChoice(['No time to talk!', 'I shall be late!', 'Oh dear, oh dear!'])}" ${name} mutters, barely looking at you.`;
-    }
-    if (personality.includes('melancholic') || personality.includes('philosophical')) {
-        return `${name} regards you with a distant gaze. "${randomChoice(['The world is a grand stage, is it not?', 'What is it you truly seek?', 'Some questions have no answers.'])}"`;
-    }
-    if (personality.includes('ambitious') || personality.includes('confident')) {
-        return `${name} sizes you up. "${randomChoice(['State your purpose.', 'Do not waste my time.', 'Success favors the bold.'])}"`;
-    }
-    return `${name} nods at you but doesn't say anything.`;
-};
-
-const handleRead = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    const itemName = parsedCmd.dobj;
-    if (!itemName) return "What do you want to read?";
-
-    const { world_state, objects } = worldModel;
-    const itemInInventory = world_state.player_inventory.find(invItem => invItem.toLowerCase() === itemName);
-    const itemInLocation = world_state.object_locations.find(
-        locItem => locItem.locationName === world_state.current_location && locItem.objectName.toLowerCase() === itemName
-    );
-
-    if (!itemInInventory && !itemInLocation) {
-        return `You don't see a "${itemName}" here.`;
-    }
-
-    const objectName = itemInInventory || itemInLocation?.objectName;
-    const object = objects.find(obj => obj.name === objectName);
-
-    const contentProp = object?.properties.find(p => p.key === 'content');
-    if (contentProp) {
-        return `The ${object?.name} reads: "${contentProp.value}"`;
-    }
-
-    return `There is nothing to read on the ${itemName}.`;
-};
-
-const handleOpen = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    // Fix: Destructure world_state for consistency.
-    const { world_state } = worldModel;
-    const targetName = parsedCmd.dobj;
-    if (!targetName) return "What do you want to open?";
-
-    const target = worldModel.objects.find(o => o.name.toLowerCase() === targetName && world_state.object_locations.some(ol => ol.objectName === o.name && ol.locationName === world_state.current_location));
-    if (!target) return `You don't see a ${targetName} here.`;
-    if (getObjectProp(target, 'is_container') !== 'true') return `You can't open that.`;
-    if (getObjectProp(target, 'is_locked') === 'true') return "It's locked.";
-    if (getObjectProp(target, 'is_open') === 'true') return "It's already open.";
-    
-    setObjectProp(target, 'is_open', 'true');
-    return `You open the ${target.name}.`;
-}
-
-const handleClose = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    // Fix: Destructure world_state for consistency.
-    const { world_state } = worldModel;
-    const targetName = parsedCmd.dobj;
-    if (!targetName) return "What do you want to close?";
-
-    const target = worldModel.objects.find(o => o.name.toLowerCase() === targetName && world_state.object_locations.some(ol => ol.objectName === o.name && ol.locationName === world_state.current_location));
-    if (!target) return `You don't see a ${targetName} here.`;
-    if (getObjectProp(target, 'is_container') !== 'true') return `You can't close that.`;
-    if (getObjectProp(target, 'is_open') !== 'true') return "It's already closed.";
-    
-    setObjectProp(target, 'is_open', 'false');
-    return `You close the ${target.name}.`;
-}
-
-const handleUse = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    const { world_state } = worldModel;
-    const {dobj, iobj} = parsedCmd;
-    if (!dobj || !iobj) return "What do you want to use on what?";
-
-    // Check for tool in inventory OR location
-    const toolInInventory = worldModel.objects.find(o => o.name.toLowerCase() === dobj && world_state.player_inventory.includes(o.name));
-    const toolInLocation = worldModel.objects.find(o => o.name.toLowerCase() === dobj && world_state.object_locations.some(ol => ol.objectName === o.name && ol.locationName === world_state.current_location));
-    const tool = toolInInventory || toolInLocation;
-
-    if (!tool) return `You don't have or see a ${dobj}.`;
-
-    const target = worldModel.objects.find(o => o.name.toLowerCase() === iobj && world_state.object_locations.some(ol => ol.objectName === o.name && ol.locationName === world_state.current_location));
-    if (!target) return `You don't see a ${iobj} here.`;
-
-    const toolId = getObjectProp(tool, 'item_id');
-    const targetKeyId = getObjectProp(target, 'key_id');
-
-    if (getObjectProp(target, 'is_locked') === 'true' && toolId && toolId === targetKeyId) {
-        setObjectProp(target, 'is_locked', 'false');
-        
-        // If the tool was used from the location, automatically pick it up.
-        if (toolInLocation && !toolInInventory) {
-            world_state.player_inventory.push(tool.name);
-            const locIndex = world_state.object_locations.findIndex(ol => ol.objectName === tool.name && ol.locationName === world_state.current_location);
-            if(locIndex > -1) world_state.object_locations.splice(locIndex, 1);
-            return `You pick up the ${tool.name} and use it on the ${target.name}. It unlocks with a click.`;
-        }
-        return `You use the ${tool.name} on the ${target.name}. It unlocks with a click.`;
-    }
-
-    return "That doesn't seem to do anything.";
-};
-
-const handleShave = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    const { world_state } = worldModel;
-    const hasRazorInInventory = world_state.player_inventory.some(item => item.toLowerCase().includes('razor'));
-    const hasRazorInLocation = world_state.object_locations.some(
-        loc => loc.locationName === world_state.current_location && loc.objectName.toLowerCase().includes('razor')
-    );
-
-    if (hasRazorInInventory || hasRazorInLocation) {
-        const hasLather = world_state.object_locations.some(
-            loc => loc.locationName === world_state.current_location && loc.objectName.toLowerCase().includes('lather')
-        );
-        if (hasLather) {
-            return "Using the lather and razor, you have a remarkably close and refreshing shave.";
-        }
-        return "You have a nice, clean shave. You feel refreshed.";
-    }
-
-    return "You have nothing to shave with.";
-};
-
-const handleEat = (worldModel: WorldModel, parsedCmd: ParsedCommand): string => {
-    const { world_state, objects } = worldModel;
-    const itemName = parsedCmd.dobj;
-    if (!itemName) return "What do you want to eat?";
-
-    const lowerItemName = itemName.toLowerCase();
-
-    // Check inventory or location for the item
-    const itemInInventory = world_state.player_inventory.find(invItem => invItem.toLowerCase().includes(lowerItemName));
-    const itemInLocationObj = world_state.object_locations.find(
-        locItem => locItem.locationName === world_state.current_location && locItem.objectName.toLowerCase().includes(lowerItemName)
-    );
-    const itemInLocation = itemInLocationObj ? itemInLocationObj.objectName : undefined;
-    const targetItemName = itemInInventory || itemInLocation;
-
-    if (!targetItemName) {
-        return `You don't have or see any ${itemName} to eat.`;
-    }
-
-    const itemObject = objects.find(o => o.name === targetItemName);
-    if (getObjectProp(itemObject, 'is_edible') !== 'true') {
-        return `You can't eat the ${targetItemName}.`;
-    }
-    
-    // Consume the item
-    if (itemInInventory) {
-        const invIndex = world_state.player_inventory.findIndex(i => i === targetItemName);
-        if (invIndex > -1) world_state.player_inventory.splice(invIndex, 1);
-    } else if (itemInLocation) {
-        const locIndex = world_state.object_locations.findIndex(ol => ol.objectName === targetItemName && ol.locationName === world_state.current_location);
-        if (locIndex > -1) world_state.object_locations.splice(locIndex, 1);
-    }
-
-    const effect = getObjectProp(itemObject, 'effect');
-    return effect ? `You eat the ${targetItemName}. ${effect}` : `You eat the ${targetItemName}. It's quite tasty.`;
-};
-
-
-const commandHandlers: Record<string, (model: WorldModel, parsedCmd: ParsedCommand) => string> = {
-    'look': handleLook, 'l': handleLook, 'examine': handleLook,
-    'inventory': handleInventory, 'i': handleInventory,
-    'take': handleTake, 'get': handleTake,
-    'drop': handleDrop,
-    'go': handleGo, 'move': handleGo, 'travel': handleGo,
-    'talk': handleTalkTo, 'ask': handleTalkTo,
-    'read': handleRead,
-    'open': handleOpen,
-    'close': handleClose,
-    'use': handleUse,
-    'shave': handleShave,
-    'eat': handleEat,
-};
+// --- CORE ADAPTIVE COMMAND ENGINE ---
 
 /**
- * Processes a player command using a simple, deterministic ruleset.
+ * Processes a player command using a property-driven, adaptive engine.
  */
 export const localProcessPlayerCommand = (
     currentWorldModel: WorldModel,
@@ -406,57 +61,322 @@ export const localProcessPlayerCommand = (
 ): { narrative: string, updatedWorldState: WorldState } => {
     
     const worldModel = deepClone(currentWorldModel);
-    let narrative = "I don't understand that command.";
-
+    const { world_state, settings, objects, characters } = worldModel;
     const parsedCmd = parseCommand(command);
-    const handler = commandHandlers[parsedCmd.verb];
-    
-    if (handler) {
-        narrative = handler(worldModel, parsedCmd);
-    } else if (parsedCmd.verb === 'unlock') { // alias for 'use key on target'
-        const newParsedCmd = { verb: 'use', dobj: parsedCmd.iobj, iobj: parsedCmd.dobj, prep: 'on' };
-        narrative = handleUse(worldModel, newParsedCmd);
-    }
+    const { verb, dobj, iobj } = parsedCmd;
 
+    // --- Helper to find an object contextually ---
+    const findObjectContextually = (name: string | undefined): { obj: WorldObject | undefined; locType: 'inventory' | 'location' | 'container'; locName: string } | null => {
+        if (!name) return null;
+        const lowerName = name.toLowerCase().replace(/^(a|an|the)\s+/, '').trim();
 
-    return { narrative, updatedWorldState: worldModel.world_state };
-};
+        // Check inventory first
+        const invItemName = world_state.player_inventory.find(i => i.toLowerCase().replace(/^(a|an|the)\s+/, '').trim() === lowerName);
+        if (invItemName) {
+            return { obj: objects.find(o => o.name === invItemName), locType: 'inventory', locName: 'player_inventory' };
+        }
+        
+        // Check current location
+        const locItem = world_state.object_locations.find(ol => ol.objectName.toLowerCase().replace(/^(a|an|the)\s+/, '').trim() === lowerName && ol.locationName === world_state.current_location);
+        if (locItem) {
+            return { obj: objects.find(o => o.name === locItem.objectName), locType: 'location', locName: world_state.current_location };
+        }
 
+        // Check open containers in the current location
+        const openContainersInLocation = world_state.object_locations
+            .map(ol => objects.find(o => o.name === ol.objectName && ol.locationName === world_state.current_location))
+            .filter(o => o && getObjectProp(o, 'is_container') === 'true' && getObjectProp(o, 'is_open') === 'true');
 
-/**
- * Generates a dynamic, descriptive narrative for a simulation tick based on world state.
- */
-const generateTickNarrative = (worldModel: WorldModel): string | null => {
-    const { world_state, settings, characters } = worldModel;
-    
-    const currentLocation = settings.find(s => s.name === world_state.current_location);
-    const character = randomChoice(characters.filter(
-        char => world_state.character_locations.some(
-            loc => loc.characterName === char.name && loc.locationName === world_state.current_location
-        )
-    ));
-
-    const grammar: Record<string, string[]> = {
-        origin: ['#sensory#', '#character#', '#environment#'],
-        sensory: [
-            'The scent of #smell# hangs in the air.',
-            'A floorboard creaks somewhere in the building.',
-            'The distant sound of #sound# tolls once, then falls silent.',
-            'A faint, unidentifiable scent drifts by on the air.',
-        ],
-        smell: ['old paper', 'dust', 'damp stone', 'ozone'],
-        sound: ['a bell', 'a closing door', 'a faint shout'],
-        character: character ? [
-            `${character.name} ${randomChoice(character.personality.includes('anxious') ? ['glances nervously towards the exit', 'taps their foot impatiently'] : ['shifts their weight, lost in thought', 'stares blankly into the middle distance'])}.`,
-            `A flicker of ${randomChoice(character.personality.includes('ambitious') ? ['determination', 'calculation'] : ['boredom', 'weariness'])} crosses ${character.name}'s face.`
-        ] : ['You feel a profound sense of solitude.'],
-        environment: currentLocation ? [
-            `${randomChoice(currentLocation.ambience_descriptors.includes('dark') ? ['Shadows cling to the corners of the room, deep and motionless.'] : ['A comfortable silence settles over the area.'])}`,
-            `The ${randomChoice(currentLocation.ambience_descriptors.includes('cold') ? ['cold seems to seep in from the very stones.'] : ['air feels heavy and still.'])}`
-        ] : ['The world holds its breath.'],
+        for (const container of openContainersInLocation) {
+            if (!container) continue;
+            const itemInContainer = world_state.object_locations.find(ol => ol.objectName.toLowerCase().replace(/^(a|an|the)\s+/, '').trim() === lowerName && ol.locationName === container.name);
+            if (itemInContainer) {
+                return { obj: objects.find(o => o.name === itemInContainer.objectName), locType: 'container', locName: container.name };
+            }
+        }
+        
+        return null;
     };
 
-    return proceduralGenerate(grammar, '#origin#');
+
+    // --- 1. META & WORLD COMMANDS (don't require a direct object) ---
+    switch(verb) {
+        case 'look':
+        case 'l':
+        case 'examine': {
+             // "look in [container]" or "look at [object]"
+            const targetName = (parsedCmd.prep === 'in' || parsedCmd.prep === 'inside') ? iobj : dobj;
+            if (targetName) {
+                const targetContext = findObjectContextually(targetName);
+                if (!targetContext || !targetContext.obj) return { narrative: `You see nothing special about the ${targetName}.`, updatedWorldState: world_state };
+                
+                const target = targetContext.obj;
+                if (getObjectProp(target, 'is_container') === 'true') {
+                    if (getObjectProp(target, 'is_open') !== 'true') return { narrative: `The ${target?.name} is closed.`, updatedWorldState: world_state };
+                    
+                    const contents = world_state.object_locations.filter(ol => ol.locationName === target?.name).map(ol => ol.objectName);
+                    if (contents.length > 0) return { narrative: `Inside the ${target?.name}, you see: ${contents.join(', ')}.`, updatedWorldState: world_state };
+                    
+                    return { narrative: `The ${target?.name} is empty.`, updatedWorldState: world_state };
+                }
+                // Default "look at object"
+                return { narrative: `${target?.name}: ${target?.properties.map(p => p.value).join(', ')}.`, updatedWorldState: world_state };
+            }
+
+            // "look" (general)
+            const location = settings.find(s => s.name === world_state.current_location);
+            const charactersHere = world_state.character_locations.filter(cl => cl.locationName === world_state.current_location).map(cl => cl.characterName);
+            const objectsHere = world_state.object_locations.filter(ol => ol.locationName === world_state.current_location).map(ol => {
+                const obj = objects.find(o => o.name === ol.objectName);
+                if(obj && getObjectProp(obj, 'is_container') === 'true') return `${obj.name} (${getObjectProp(obj, 'is_open') === 'true' ? 'open' : 'closed'})`;
+                return ol.objectName;
+            });
+            let narrative = `You are in ${world_state.current_location}. ${location?.ambience_descriptors.join(' ')}\n`;
+            if (charactersHere.length > 0) narrative += `You see: ${charactersHere.join(', ')}.\n`;
+            if (objectsHere.length > 0) narrative += `There is a ${objectsHere.join(', ')} here.`;
+            return { narrative, updatedWorldState: world_state };
+        }
+        case 'inventory':
+        case 'i': {
+            if (world_state.player_inventory.length === 0) return { narrative: "You are not carrying anything.", updatedWorldState: world_state };
+            return { narrative: `You have: ${world_state.player_inventory.join(', ')}.`, updatedWorldState: world_state };
+        }
+        case 'go':
+        case 'move':
+        case 'travel': {
+            if (!dobj) return { narrative: "Where do you want to go?", updatedWorldState: world_state };
+            const foundSetting = settings.find(s => s.name.toLowerCase().includes(dobj));
+            if (foundSetting) {
+                world_state.current_location = foundSetting.name;
+                return { narrative: `You travel to ${foundSetting.name}.`, updatedWorldState: world_state };
+            }
+            return { narrative: `You don't know how to get to a place called "${dobj}".`, updatedWorldState: world_state };
+        }
+        case 'talk':
+        case 'ask': {
+             const charName = dobj;
+             if (!charName) return { narrative: "Who do you want to talk to?", updatedWorldState: world_state };
+             const characterInLocation = characters.find(
+                 char => char.name.toLowerCase() === charName && world_state.character_locations.some(loc => loc.characterName === char.name && loc.locationName === world_state.current_location)
+             );
+             if (!characterInLocation) return { narrative: `You don't see anyone named "${charName}" here.`, updatedWorldState: world_state };
+             // Simple dialogue generation
+             if (characterInLocation.personality.includes('hurried')) return { narrative: `"${randomChoice(['No time to talk!', 'I shall be late!'])}" ${characterInLocation.name} mutters.`, updatedWorldState: world_state };
+             return { narrative: `${characterInLocation.name} nods at you but doesn't say anything.`, updatedWorldState: world_state };
+        }
+        case 'shave': {
+             const hasRazor = findObjectContextually('razor');
+             if (hasRazor) {
+                 const hasLather = findObjectContextually('lather');
+                 if (hasLather) return { narrative: "Using the lather and razor, you have a remarkably close and refreshing shave.", updatedWorldState: world_state };
+                 return { narrative: "You have a nice, clean shave. You feel refreshed.", updatedWorldState: world_state };
+             }
+             return { narrative: "You have nothing to shave with.", updatedWorldState: world_state };
+        }
+    }
+
+    // --- 2. OBJECT INTERACTION COMMANDS ---
+    if (!dobj) return { narrative: `What do you want to ${verb}?`, updatedWorldState: world_state };
+    
+    const dobjContext = findObjectContextually(dobj);
+    const iobjContext = findObjectContextually(iobj);
+
+    switch(verb) {
+        case 'take':
+        case 'get': {
+            if (dobjContext?.locType === 'inventory') return { narrative: "You already have that.", updatedWorldState: world_state };
+            if (!dobjContext || !dobjContext.obj) return { narrative: "You don't see that here.", updatedWorldState: world_state };
+            
+            // Remove from old location
+            const oldLocIndex = world_state.object_locations.findIndex(ol => ol.objectName === dobjContext.obj?.name && ol.locationName === dobjContext.locName);
+            if (oldLocIndex > -1) world_state.object_locations.splice(oldLocIndex, 1);
+            
+            // Add to inventory
+            world_state.player_inventory.push(dobjContext.obj.name);
+            return { narrative: `You take the ${dobjContext.obj.name}.`, updatedWorldState: world_state };
+        }
+        case 'drop': {
+            if (dobjContext?.locType !== 'inventory' || !dobjContext.obj) return { narrative: "You don't have that.", updatedWorldState: world_state };
+            
+            // Remove from inventory
+            const invIndex = world_state.player_inventory.findIndex(i => i === dobjContext.obj?.name);
+            if(invIndex > -1) world_state.player_inventory.splice(invIndex, 1);
+
+            // Add to location
+            world_state.object_locations.push({ objectName: dobjContext.obj.name, locationName: world_state.current_location });
+            return { narrative: `You drop the ${dobjContext.obj.name}.`, updatedWorldState: world_state };
+        }
+        case 'give': {
+            if (!dobj || !iobj) return { narrative: `What do you want to give, and to whom?`, updatedWorldState: world_state };
+            
+            const itemToGiveContext = findObjectContextually(dobj);
+
+            if (!itemToGiveContext || itemToGiveContext.locType !== 'inventory' || !itemToGiveContext.obj) {
+                return { narrative: `You don't have a ${dobj}.`, updatedWorldState: world_state };
+            }
+
+            const cleanIobjName = iobj.toLowerCase().replace(/^(a|an|the)\s+/, '').trim();
+            const targetCharacter = characters.find(
+                char => char.name.toLowerCase() === cleanIobjName
+            );
+
+            if (!targetCharacter) {
+                 return { narrative: `There is no one called "${iobj}" here.`, updatedWorldState: world_state };
+            }
+            
+            const isCharacterPresent = world_state.character_locations.some(
+                loc => loc.characterName === targetCharacter.name && loc.locationName === world_state.current_location
+            );
+
+            if (!isCharacterPresent) {
+                return { narrative: `You don't see ${targetCharacter.name} here.`, updatedWorldState: world_state };
+            }
+
+            // Action is valid. Perform the state change.
+            const invIndex = world_state.player_inventory.findIndex(i => i === itemToGiveContext.obj?.name);
+            if (invIndex > -1) {
+                world_state.player_inventory.splice(invIndex, 1);
+            }
+            
+            // Future: Add item to character's inventory if that gets implemented.
+            return { narrative: `You give the ${itemToGiveContext.obj.name} to ${targetCharacter.name}.`, updatedWorldState: world_state };
+        }
+        case 'read': {
+            if (!dobjContext || !dobjContext.obj) return { narrative: `You don't have or see a ${dobj}.`, updatedWorldState: world_state };
+            const obj = dobjContext.obj;
+            // Dynamic puzzle logic: reading the book reveals the key
+            if (getObjectProp(obj, 'on_read_effect') === 'reveals_key' && getObjectProp(obj, 'has_been_read') === 'false') {
+                setObjectProp(obj, 'has_been_read', 'true');
+                const key = objects.find(o => o.name === 'Silver Key');
+                if (key) {
+                    world_state.object_locations.push({ objectName: key.name, locationName: world_state.current_location });
+                    return { narrative: getObjectProp(obj, 'content_unread') || 'You read the book and a key falls out!', updatedWorldState: world_state };
+                }
+            }
+            if (getObjectProp(obj, 'has_been_read') === 'true') return { narrative: getObjectProp(obj, 'content_read') || `You've already read it.`, updatedWorldState: world_state };
+            const content = getObjectProp(obj, 'content');
+            if (content) return { narrative: `It reads: "${content}"`, updatedWorldState: world_state };
+            return { narrative: `There's nothing to read on the ${obj.name}.`, updatedWorldState: world_state };
+        }
+        case 'open':
+        case 'close': {
+             if (dobjContext?.locType === 'inventory') return { narrative: `You can't do that while holding it.`, updatedWorldState: world_state };
+             if (!dobjContext || !dobjContext.obj) return { narrative: `You don't see a ${dobj} here.`, updatedWorldState: world_state };
+             const obj = dobjContext.obj;
+             if (getObjectProp(obj, 'is_container') !== 'true') return { narrative: `You can't ${verb} that.`, updatedWorldState: world_state };
+
+             if (verb === 'open') {
+                 if(getObjectProp(obj, 'is_locked') === 'true') return { narrative: "It's locked.", updatedWorldState: world_state };
+                 if(getObjectProp(obj, 'is_open') === 'true') return { narrative: "It's already open.", updatedWorldState: world_state };
+                 setObjectProp(obj, 'is_open', 'true');
+                 return { narrative: `You open the ${obj.name}.`, updatedWorldState: world_state };
+             } else { // close
+                 if(getObjectProp(obj, 'is_open') !== 'true') return { narrative: "It's already closed.", updatedWorldState: world_state };
+                 setObjectProp(obj, 'is_open', 'false');
+                 return { narrative: `You close the ${obj.name}.`, updatedWorldState: world_state };
+             }
+        }
+        case 'use':
+        case 'unlock': {
+            let toolContext, targetContext;
+
+            if (verb === 'unlock' || (verb === 'use' && parsedCmd.prep === 'with')) {
+                // Handles "unlock TARGET with TOOL" and "use TARGET with TOOL"
+                toolContext = iobjContext;
+                targetContext = dobjContext;
+            } else {
+                // Handles "use TOOL on/in/at TARGET" etc.
+                toolContext = dobjContext;
+                targetContext = iobjContext;
+            }
+
+            if (!toolContext || !targetContext || !toolContext.obj || !targetContext.obj) {
+                if (verb === 'unlock') return { narrative: `What do you want to unlock, and with what?`, updatedWorldState: world_state };
+                return { narrative: `What do you want to use, and on what?`, updatedWorldState: world_state };
+            }
+            
+            const tool = toolContext.obj;
+            const target = targetContext.obj;
+
+            // 1. Specific Unlock Logic
+            const toolId = getObjectProp(tool, 'item_id');
+            const targetKeyId = getObjectProp(target, 'key_id');
+
+            if (getObjectProp(target, 'is_locked') === 'true' && toolId && toolId === targetKeyId) {
+                setObjectProp(target, 'is_locked', 'false');
+                let narrative = `You use the ${tool.name} on the ${target.name}. It unlocks with a click.`;
+
+                // Auto-take key if not in inventory and used from the location
+                if (toolContext.locType !== 'inventory') {
+                    const locIndex = world_state.object_locations.findIndex(ol => ol.objectName === tool.name && ol.locationName === toolContext.locName);
+                    if(locIndex > -1) world_state.object_locations.splice(locIndex, 1);
+                    world_state.player_inventory.push(tool.name);
+                    narrative = `You pick up the ${tool.name} and use it on the ${target.name}. It unlocks with a click.`;
+                }
+                return { narrative, updatedWorldState: world_state };
+            }
+
+            // 2. Generic Property-Based 'use' Logic, using the tool's item_id
+            if (toolId) {
+                const interactionPropKey = `on_use_${toolId}`;
+                const interactionNarrative = getObjectProp(target, interactionPropKey);
+                if (interactionNarrative) {
+                    // Future enhancement: parse narrative for state changes like "consume:target"
+                    return { narrative: interactionNarrative, updatedWorldState: world_state };
+                }
+            }
+            
+            // 3. Generic Consequence-Based 'use' Logic for misuse
+            const targetSurface = getObjectProp(target, 'surface');
+            if (targetSurface) {
+                const interactionPropKey = `on_use_on_${targetSurface}`;
+                const interactionNarrativeTemplate = getObjectProp(tool, interactionPropKey);
+                if (interactionNarrativeTemplate) {
+                    const narrative = interactionNarrativeTemplate.replace('{target_name}', target.name);
+                    
+                    // Check for consequences, like destroying the tool
+                    if (getObjectProp(tool, 'on_break_destroy') === 'true') {
+                        // The tool must be in the player's inventory to be used this way and destroyed.
+                        if (toolContext.locType === 'inventory') {
+                            const invIndex = world_state.player_inventory.findIndex(i => i === tool.name);
+                            if(invIndex > -1) world_state.player_inventory.splice(invIndex, 1);
+                        }
+                    }
+
+                    return { narrative, updatedWorldState: world_state };
+                }
+            }
+            
+            // 4. Fallback for unhandled interactions
+            return { narrative: "That doesn't seem to do anything.", updatedWorldState: world_state };
+        }
+        case 'eat': {
+            if (!dobjContext || !dobjContext.obj) return { narrative: `You don't have or see any ${dobj} to eat.`, updatedWorldState: world_state };
+            const obj = dobjContext.obj;
+            if (getObjectProp(obj, 'is_edible') !== 'true') return { narrative: `You can't eat the ${obj.name}.`, updatedWorldState: world_state };
+
+            // Consume item
+            if (dobjContext.locType === 'inventory') {
+                const invIndex = world_state.player_inventory.findIndex(i => i === obj.name);
+                if(invIndex > -1) world_state.player_inventory.splice(invIndex, 1);
+            } else {
+                const locIndex = world_state.object_locations.findIndex(ol => ol.objectName === obj.name && ol.locationName === dobjContext.locName);
+                if(locIndex > -1) world_state.object_locations.splice(locIndex, 1);
+            }
+            const effect = getObjectProp(obj, 'effect');
+            return { narrative: effect ? `You eat the ${obj.name}. ${effect}` : `You eat the ${obj.name}.`, updatedWorldState: world_state };
+        }
+        // --- 3. ADAPTIVE GENERIC VERB HANDLER ---
+        default: {
+            if (!dobjContext || !dobjContext.obj) return { narrative: `You don't see any ${dobj} to ${verb}.`, updatedWorldState: world_state };
+            const customVerbProp = getObjectProp(dobjContext.obj, `on_${verb}`);
+            if (customVerbProp) {
+                // Future enhancement: parse property for state changes, e.g., "state=open;narrative=It opens."
+                return { narrative: customVerbProp, updatedWorldState: world_state };
+            }
+            return { narrative: `You can't ${verb} the ${dobj}.`, updatedWorldState: world_state };
+        }
+    }
 };
 
 
@@ -467,67 +387,47 @@ export const localAdvanceSimulation = (
     currentWorldModel: WorldModel
 ): { narrative: string, updatedWorldState: WorldState } => {
     const worldModel = deepClone(currentWorldModel);
-    const { world_state, settings, characters } = worldModel;
-    const tickNarratives = [];
+    const { world_state } = worldModel;
     
-    // 1. Time Progression
+    // Time Progression
     const timeParts = world_state.time.split(',');
     const dayMatch = timeParts[0].match(/\d+/);
-    let day = dayMatch ? parseInt(dayMatch[0]) : 1;
+    let day = dayMatch ? parseInt(dayMatch[0], 10) : 1;
     const originalDay = day;
+    
     let timeOfDay = timeParts[1] ? timeParts[1].trim() : "Morning";
     
-    const timeProgression = { "Morning": "Afternoon", "Afternoon": "Evening", "Evening": "Night" };
-    
-    if (timeOfDay in timeProgression) {
-        timeOfDay = timeProgression[timeOfDay as keyof typeof timeProgression];
+    const timeProgressionOrder: string[] = ["Morning", "Afternoon", "Evening", "Night"];
+    let currentTimeIndex = -1;
+
+    // Find the current stage in the day by checking if the current time string includes any of our keywords.
+    // This makes it robust against descriptive times like "Dreary Afternoon".
+    for (let i = 0; i < timeProgressionOrder.length; i++) {
+        if (timeOfDay.includes(timeProgressionOrder[i])) {
+            currentTimeIndex = i;
+            break;
+        }
+    }
+
+    if (currentTimeIndex !== -1 && currentTimeIndex < timeProgressionOrder.length - 1) {
+        // If we're not at the end of the day, advance to the next period.
+        timeOfDay = timeProgressionOrder[currentTimeIndex + 1];
     } else {
+        // Otherwise, it's the next day.
         timeOfDay = "Morning";
         day += 1;
     }
+
     world_state.time = `Day ${day}, ${timeOfDay}`;
     
     if (day > originalDay) {
-        tickNarratives.push(`A new day begins.`);
+        return { narrative: `A new day begins.`, updatedWorldState: world_state };
     }
     
-    // 2. NPC Autonomous Actions (Roguelike AI)
-    if (characters.length > 0 && settings.length > 1 && Math.random() > 0.5) {
-        const charToMove = randomChoice(characters);
-        const charLoc = world_state.character_locations.find(cl => cl.characterName === charToMove.name);
-        
-        if (charLoc) {
-            const possibleDestinations = settings.filter(s => s.name !== charLoc.locationName);
-            if (possibleDestinations.length > 0) {
-                const newLocation = randomChoice(possibleDestinations).name;
-                
-                // If player is in the same location as the departing character
-                if (charLoc.locationName === world_state.current_location) {
-                    tickNarratives.push(`${charToMove.name} wanders off towards ${newLocation}.`);
-                }
-                
-                charLoc.locationName = newLocation;
-
-                // If player is in the destination location
-                if (newLocation === world_state.current_location) {
-                    tickNarratives.push(`${charToMove.name} has arrived.`);
-                }
-            }
-        }
-    }
-    
-    // 3. Generate descriptive narrative
-    const descriptiveNarrative = generateTickNarrative(worldModel);
-    if(descriptiveNarrative) {
-        tickNarratives.push(descriptiveNarrative);
-    }
-    
-    const narrative = tickNarratives.join(' ');
-
-    return { narrative, updatedWorldState: world_state };
+    return { narrative: '', updatedWorldState: world_state };
 };
 
-// --- OFFLINE ASCII ART EMULATION ---
+// --- OFFLINE ASSET EMULATION ---
 
 const OFFLINE_ASCII_ART: Record<string, string> = {
   default: `
@@ -543,58 +443,13 @@ const OFFLINE_ASCII_ART: Record<string, string> = {
     |        '''''          |
     +-----------------------+
   `,
-  eerie: `
-      .o@@@@@@o.
-     .@@'    '@@.
-    .@@'      '@@.
-   .@@'        '@@.
-  .@@'          '@@.
- .@@'            '@@.
-.@@'              '@@.
-'@@.              .@@'
- '@@.            .@@'
-  '@@.          .@@'
-   '@@.        .@@'
-    '@@.      .@@'
-     '@@.    .@@'
-      'o@@@@@@o'
-A sense of being watched...
-  `,
-  quiet: `
-- - - - - - - - - - -
-   .               .
-       .      .
-.            .      .
-    .             .
-.        .           .
-- - -- - - - - - - - -
-The silence is profound.
-  `,
-  ship: `
-        __/___
-  _____/______|
-  \\ o o o o o /
-   \\_________/
-The gentle rock of the hull.
-  `,
   library: `
  _______________________
 || o || o || o || o || o|
 ||---------------------||
 || o || o || o || o || o|
-||---------------------||
-|| o || o || o || o || o|
 ||_____________________||
 Rows of silent knowledge.
-  `,
-  forest: `
-      /\\      /\\
-     /  \\    /  \\
-    /____\\  /____\\
-   /      \\/      \\
-  /        \\       \\
- |          |       |
-The rustle of leaves.
   `,
   cave: `
       ______
@@ -606,50 +461,6 @@ The rustle of leaves.
     \\________/
 The drip of water echoes.
   `,
-  castle: `
-    |~|
- []_|_| []
- |[]_|_|[]|
- | |[]_|_|[]| |
- | | |[]_|_|[]| | |
-A stone fortress looms.
-  `,
-  magic: `
-      .
-     -|-
-. . .| | |. . .
-     -|-
-      '
-   *       *
- *   *   *   *
-*  *   *   *  *
- A crackle of energy.
-  `,
-  dark: `
-____________________
-|                  |
-|  You see nothing.|
-|                  |
-|__________________|
- It is pitch black.
-  `,
-  cold: `
- *      *      *
-   *      *      *
-*      *      *
-  *      *      *
-A biting wind howls.
-  `,
-  ruins: `
-    ,-'   \`.-.
-  ,'         \`.
- /             \\
-|               |
- \\ //   .-. \\ /
-  | |  |   | | |
-  | |  |   | | |
-Ancient stones crumble.
-  `,
   sea: `
 ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
   ~ ~ ~ ~ ~ ~ ~ ~
@@ -659,9 +470,6 @@ Ancient stones crumble.
   `,
 };
 
-/**
- * Selects a piece of thematic ASCII art based on the current world state.
- */
 export const localGenerateAsciiArt = (worldModel: WorldModel, dynamicArt?: Record<string, string>): string => {
     const { world_state, settings } = worldModel;
     const currentLocation = settings.find(s => s.name === world_state.current_location);
@@ -670,61 +478,34 @@ export const localGenerateAsciiArt = (worldModel: WorldModel, dynamicArt?: Recor
 
         if (dynamicArt) {
             for (const key in dynamicArt) {
-                if (ambiance.includes(key)) {
-                    return dynamicArt[key];
-                }
+                if (ambiance.includes(key)) return dynamicArt[key];
             }
         }
-        
         for (const key in OFFLINE_ASCII_ART) {
-            if (key !== 'default' && ambiance.includes(key)) {
-                return OFFLINE_ASCII_ART[key];
-            }
+            if (key !== 'default' && ambiance.includes(key)) return OFFLINE_ASCII_ART[key];
         }
-        if (ambiance.includes('ocean') || ambiance.includes('water')) return OFFLINE_ASCII_ART['sea'];
     }
     return OFFLINE_ASCII_ART['default'];
 };
 
-/**
- * Creates a small, deterministic "mutation" to add flavor to the offline simulation.
- */
+
 export const localRequestEvolution = (worldModel: WorldModel): ApiMutation | null => {
-    if (Math.random() > 0.05) {
-        return null;
-    }
+    if (Math.random() > 0.05) return null;
 
-    const mutationType = randomChoice(['ADD_OBJECT', 'ENHANCE_NARRATIVE']);
-
-    if (mutationType === 'ADD_OBJECT') {
+    if (Math.random() > 0.5) {
         const potentialObjects: WorldObject[] = [
             { name: "A forgotten coin", properties: [{ key: 'material', value: 'tarnished brass' }] },
             { name: "A rusty key", properties: [{ key: 'feature', value: 'ornate handle' }] },
-            { name: "A crumpled note", properties: [{ key: 'state', value: 'barely legible' }] },
-            { name: "A single, white feather", properties: [{ key: 'origin', value: 'unknown bird'}] },
         ];
         const newObject = randomChoice(potentialObjects);
-        
-        if (worldModel.objects.some(o => o.name === newObject.name)) {
-            return null;
-        }
-
-        return {
-            type: 'ADD_OBJECT',
-            payload: newObject,
-            reason: 'The world shifts in subtle ways.'
-        };
+        if (worldModel.objects.some(o => o.name === newObject.name)) return null;
+        return { type: 'ADD_OBJECT', payload: newObject, reason: 'The world shifts in subtle ways.' };
     } else {
-        const potentialEnhancements = [
+        const enhancements = [
             'A floorboard creaks ominously in the distance.',
             'The scent of old paper and dust hangs heavy in the air.',
-            'For a moment, the light seems to dim, and a chill runs down your spine.',
-            'A faint, musical chime echoes from a place you cannot identify.',
         ];
-        return {
-            type: 'ENHANCE_NARRATIVE',
-            payload: randomChoice(potentialEnhancements),
-            reason: 'A detail sharpens into focus.'
-        };
+        // FIX: Corrected typo from ENHANCE_NARRANTIVE to ENHANCE_NARRATIVE to match the ApiMutation type.
+        return { type: 'ENHANCE_NARRATIVE', payload: randomChoice(enhancements), reason: 'A detail sharpens into focus.' };
     }
 };

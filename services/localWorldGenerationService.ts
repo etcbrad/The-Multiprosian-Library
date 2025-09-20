@@ -1,4 +1,4 @@
-import { AdventureGenre, WorldModel, Character, Setting, WorldObject, WorldState } from '../types';
+import { AdventureGenre, WorldModel, Character, Setting, WorldObject, WorldState, GameMode, Objective } from '../types';
 
 // Heuristics for parsing adventure narratives locally.
 
@@ -12,7 +12,7 @@ const findCharacters = (text: string): Character[] => {
     while ((match = nameRegex.exec(text)) !== null) {
         const name = match[1];
         // Filter out common capitalized words at the start of sentences and titles
-        if (!['Chapter', 'Letter'].includes(name) && name.length > 2) {
+        if (!['Chapter', 'Letter', 'November'].includes(name) && name.length > 2) {
              if (!existingNames.has(name)) {
                 const personality: string[] = [];
                 // Look for personality traits nearby
@@ -44,11 +44,15 @@ const findCharacters = (text: string): Character[] => {
              existingNames.add("The White Rabbit");
          }
     }
-     if (text.includes("Mrs. Saville")) {
+     if (text.includes("the creature open")) {
         // The narrator is the character.
          if (!existingNames.has("The Scientist")) {
-             characters.push({ name: "The Scientist", aliases: ["Walton"], personality: ["ambitious", "confident"], traits: ["scientific"], goals: ["reach the North Pole"], dialogue_style: "formal", relationships: [], provenance: { file_id: "local", segment_id: "1", character_offsets: [0,0] }});
+             characters.push({ name: "The Scientist", aliases: ["creator"], personality: ["ambitious", "anxious", "toiling"], traits: ["scientific"], goals: ["infuse a spark of being"], dialogue_style: "formal", relationships: [], provenance: { file_id: "local", segment_id: "1", character_offsets: [0,0] }});
              existingNames.add("The Scientist");
+         }
+         if (!existingNames.has("The Creature")) {
+             characters.push({ name: "The Creature", aliases: [], personality: ["nascent"], traits: ["dull yellow eye"], goals: ["to be"], dialogue_style: "non-verbal", relationships: [], provenance: { file_id: "local", segment_id: "1", character_offsets: [0,0] }});
+             existingNames.add("The Creature");
          }
     }
 
@@ -64,7 +68,7 @@ const findSettings = (text: string): Setting[] => {
         'shore': { name: "The Shore", ambiance: ["damp", "drizzly", "sea", "melancholy"] },
         'sea': { name: "The Sea", ambiance: ["vast", "watery", "salty"] },
         'ocean': { name: "The Ocean", ambiance: ["vast", "deep", "mysterious"] },
-        'Petersburgh': { name: "St. Petersburgh Street", ambiance: ["cold", "northern", "icy", "urban"] },
+        'dreary night of november': { name: "The Laboratory", ambiance: ["dreary", "dark", "rainy", "gothic"] },
         'bank': { name: "The Riverbank", ambiance: ["hot", "sleepy", "pastoral", "quiet"] },
         'rabbit-hole': { name: "The Rabbit-Hole", ambiance: ["dark", "mysterious", "deep", "cave"] },
         'tower': { name: "The Tower", ambiance: ["stately", "stone", "morning"] },
@@ -97,10 +101,18 @@ const findObjects = (text: string, genreTitle: string): WorldObject[] => {
     const objects: WorldObject[] = [];
     const objectPatterns: { [key: string]: { name: string, props: {key: string, value: string}[]} } = {
         "a watch out of its waistcoat-pocket": { name: "Waistcoat-Pocket Watch", props: [{ key: "function", value: "tells time"}] },
-        "a letter to Mrs. Saville": { name: "A Letter to Mrs. Saville", props: [{ key: "content", value: "Details of an enterprise"}] },
-        "bowl of lather": { name: "Bowl of Lather", props: [{key: "state", value: "full"}]},
+        "instruments of life": { name: "Instruments of Life", props: [{ key: "feature", value: "scientific contraptions"}] },
+        "bowl of lather": { name: "Bowl of Lather", props: [
+            {key: "state", value: "full"},
+            {key: "on_use_razor", value: "You work the lather into a rich foam and get a remarkably close shave. You feel refreshed."}
+        ]},
         "a mirror": { name: "A Mirror", props: [{key: "feature", value: "reflects"}]},
-        "a razor": { name: "A Razor", props: [{key: "feature", value: "sharp"}]},
+        "a razor": { name: "A Razor", props: [
+            {key: "feature", value: "sharp"},
+            {key: "item_id", value: "razor"},
+            {key: "on_use_on_hard", value: "You scrape the razor against the hard surface of the {target_name}. The delicate blade chips and breaks, rendering it useless. You lament your poor decision."},
+            {key: "on_break_destroy", value: "true"}
+        ]},
     };
     
     for(const pattern in objectPatterns) {
@@ -110,15 +122,29 @@ const findObjects = (text: string, genreTitle: string): WorldObject[] => {
         }
     }
 
+    if (text.toLowerCase().includes("gunrest")) { // Heuristic for Telemachus
+        objects.push({
+            name: "A smooth grey stone",
+            properties: [
+                { key: "feature", value: "worn by the sea" },
+                { key: "surface", value: "hard" }
+            ]
+        });
+    }
+
     if (genreTitle === "The Alchemist's Study") {
         objects.push({ name: "Iron-bound Chest", properties: [
             { key: 'is_container', value: 'true' },
             { key: 'is_locked', value: 'true' },
             { key: 'is_open', value: 'false' },
-            { key: 'key_id', value: 'silver_key_01' }
+            { key: 'key_id', value: 'silver_key_01' },
+            { key: 'surface', value: 'hard' }
         ]});
          objects.push({ name: "Leather-bound Book", properties: [
-            { key: 'content', value: 'The pages are filled with cryptic diagrams. Tucked inside is a small silver key.'}
+            { key: 'has_been_read', value: 'false' },
+            { key: 'on_read_effect', value: 'reveals_key' },
+            { key: 'content_unread', value: 'You read the cryptic diagrams. Tucked between the pages, you find a small silver key that falls to the floor.'},
+            { key: 'content_read', value: 'The pages are filled with cryptic diagrams you have already studied.'},
         ]});
         objects.push({ name: "Silver Key", properties: [
             { key: 'item_id', value: 'silver_key_01' }
@@ -153,9 +179,10 @@ const getInitialDescription = (text: string): string => {
 /**
  * Constructs a WorldModel from a given adventure narrative using local, rule-based logic.
  * @param genre The adventure genre containing the narrative text.
+ * @param mode The selected game mode which determines if objectives are created.
  * @returns A complete WorldModel for starting the simulation.
  */
-export const generateLocalWorldModel = (genre: AdventureGenre): WorldModel => {
+export const generateLocalWorldModel = (genre: AdventureGenre, mode: GameMode): WorldModel => {
     const { narrative, title } = genre;
     
     const characters = findCharacters(narrative);
@@ -168,7 +195,7 @@ export const generateLocalWorldModel = (genre: AdventureGenre): WorldModel => {
     
     // Custom logic for The Alchemist's Study puzzle setup
     if (title === "The Alchemist's Study") {
-        // Hide the key in the book by default
+        // Hide the key by default; it's revealed by reading the book.
         object_locations = object_locations.filter(ol => ol.objectName !== "Silver Key");
         // Put the goblet in the chest
         const gobletLoc = object_locations.find(ol => ol.objectName === "Golden Goblet");
@@ -183,10 +210,30 @@ export const generateLocalWorldModel = (genre: AdventureGenre): WorldModel => {
         }
     }
 
+    const objectives: Objective[] = [];
+    if (mode === 'Narrative') {
+        switch(title) {
+            case "The Alchemist's Study":
+                objectives.push({ description: "Find a way to escape the study.", is_completed: false });
+                break;
+            case "Down the Rabbit-Hole":
+                objectives.push({ description: "Follow the White Rabbit.", is_completed: false });
+                break;
+            case "Loomings":
+                objectives.push({ description: "Find a ship and get to sea.", is_completed: false });
+                break;
+            case "Prometheus Unbound":
+                 objectives.push({ description: "Confront the consequences of your creation.", is_completed: false });
+                 break;
+        }
+    }
+
 
     const world_state: WorldState = {
         current_location: initialLocation,
         time: "Day 1, Morning",
+        mode,
+        objectives,
         environment: { weather: "Clear", lighting: "Bright" },
         player_inventory: [],
         character_locations: characters.map(c => ({ characterName: c.name, locationName: initialLocation })),
@@ -202,6 +249,7 @@ export const generateLocalWorldModel = (genre: AdventureGenre): WorldModel => {
         if (ambiance.includes('hot')) world_state.environment.weather = 'Hot';
         if (ambiance.includes('dark') || ambiance.includes('evening') || ambiance.includes('twilight')) world_state.environment.lighting = 'Dim Twilight';
         if (ambiance.includes('morning')) world_state.time = 'Day 1, Morning';
+        if (ambiance.includes('november')) world_state.time = 'Day 1, Dreary Afternoon';
     }
 
     const model: WorldModel = {
